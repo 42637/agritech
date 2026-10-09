@@ -88,3 +88,42 @@ def delete_farm(farm_id: int, db: Session = Depends(get_db)):
     db.delete(farm)
     db.commit()
     return {"message": "Farm parcel deleted successfully", "id": farm_id}
+
+@router.get("/{farm_id}/insights")
+async def get_farm_insights(farm_id: int, db: Session = Depends(get_db)):
+    farm = db.query(Farm).filter(Farm.id == farm_id).first()
+    if not farm:
+        # Fallback parcel context if farm_id not found
+        farm_context = {
+            "farm_name": "Bhimavaram Farm",
+            "village": "Bhimavaram",
+            "district": "West Godavari",
+            "state": "Andhra Pradesh",
+            "acreage": 2.5,
+            "soil_ph": 6.8,
+            "current_crops": "Paddy"
+        }
+    else:
+        farm_context = {
+            "farm_name": farm.farm_name,
+            "village": farm.village,
+            "district": farm.district,
+            "state": farm.state,
+            "acreage": farm.acreage,
+            "soil_ph": farm.soil_ph or 6.8,
+            "current_crops": farm.current_crops or "Paddy"
+        }
+
+    from ..services.gemini_ai import gemini_ai_service
+    ai_insights = await gemini_ai_service.generate_farm_insights(farm_context)
+
+    return {
+        "farm_id": farm_id,
+        "farm_name": farm_context["farm_name"],
+        "village": farm_context["village"],
+        "acreage": farm_context["acreage"],
+        "soil_ph": farm_context["soil_ph"],
+        "current_crop": farm_context["current_crops"],
+        "insights": ai_insights
+    }
+

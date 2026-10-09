@@ -76,7 +76,7 @@ export const AskAgriScreen: React.FC<AskAgriScreenProps> = ({ selectedFarm, onBa
           </div>
           <div>
             <h2 className="font-extrabold text-lg text-[#102D20] leading-tight">Ask AgriSmart AI</h2>
-            <p className="text-xs text-[#5A6E65]">Voice & NVIDIA AI Farming Assistant</p>
+            <p className="text-xs text-[#5A6E65]">Voice & Gemini AI Farming Assistant</p>
           </div>
         </div>
       </div>
@@ -152,7 +152,7 @@ export const AskAgriScreen: React.FC<AskAgriScreenProps> = ({ selectedFarm, onBa
       {loading && (
         <div className="bg-white border border-green-100 rounded-3xl p-6 text-center space-y-3">
           <Bot className="w-10 h-10 text-[#087A3D] mx-auto animate-bounce" />
-          <p className="text-xs font-bold text-[#102D20]">NVIDIA AI is analyzing your farm context...</p>
+          <p className="text-xs font-bold text-[#102D20]">Gemini AI is analyzing your farm context...</p>
         </div>
       )}
 

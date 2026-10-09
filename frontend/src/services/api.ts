@@ -185,6 +185,13 @@ export const api = {
     await fetch(`${API_BASE}/saved/${id}`, { method: 'DELETE' });
   },
 
+  // Insights
+  async getFarmInsights(farmId: number) {
+    const res = await fetch(`${API_BASE}/farms/${farmId}/insights`);
+    if (!res.ok) throw new Error("Failed to fetch dynamic farm insights");
+    return res.json();
+  },
+
   // Irrigation
   async getIrrigationPlan(farmId: number, crop: string, waterSource: string, growthStage: string = "Vegetative Stage") {
     const res = await fetch(`${API_BASE}/irrigation/plan`, {

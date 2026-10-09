@@ -3,7 +3,7 @@ from sqlalchemy.orm import Session
 from ..database import get_db
 from ..models import Farm, User, AIConversation
 from ..schemas import AIAskRequest, AIAskResponse
-from ..services.nvidia_ai import nvidia_ai_service
+from ..services.gemini_ai import gemini_ai_service
 
 router = APIRouter(prefix="/api/ai", tags=["AI Services"])
 
@@ -27,7 +27,7 @@ async def ask_agri_ai(req: AIAskRequest, db: Session = Depends(get_db)):
                 "current_crops": farm.current_crops
             }
 
-    result = await nvidia_ai_service.generate_agricultural_answer(
+    result = await gemini_ai_service.generate_agricultural_answer(
         question=req.question,
         farm_context=farm_context,
         language=req.language or "en"

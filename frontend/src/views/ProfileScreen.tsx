@@ -25,7 +25,7 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({ onLogout }) => {
           </div>
           <div>
             <h3 className="font-extrabold text-base text-[#102D20]">Ramesh Kumar</h3>
-            <p className="text-xs text-gray-500 font-semibold">+91 98765 43210 (Verified OTP)</p>
+            <p className="text-xs text-gray-500 font-semibold">+91 98765 43210 (Verified)</p>
           </div>
         </div>
 
@@ -41,8 +41,8 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({ onLogout }) => {
           </div>
 
           <div className="flex items-center justify-between p-3 bg-gray-50 rounded-2xl">
-            <span className="text-gray-600">NVIDIA AI Status</span>
-            <span className="font-extrabold text-emerald-600">Active (NIM Llama 3.3)</span>
+            <span className="text-gray-600">Google Gemini AI Status</span>
+            <span className="font-extrabold text-emerald-600">Active (Gemini 2.5 Flash)</span>
           </div>
         </div>
 

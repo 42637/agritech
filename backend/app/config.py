@@ -4,12 +4,15 @@ from dotenv import load_dotenv
 load_dotenv()
 
 class Settings:
-    NVIDIA_API_KEY: str = os.getenv("NVIDIA_API_KEY", "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")
-    NVIDIA_BASE_URL: str = os.getenv("NVIDIA_BASE_URL", "https://integrate.api.nvidia.com/v1")
-    NVIDIA_MODEL: str = os.getenv("NVIDIA_MODEL", "meta/llama-3.3-70b-instruct")
+    GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "")
+    GEMINI_MODEL: str = os.getenv("GEMINI_MODEL", "gemini-3.8-flash")
+    SUPABASE_URL: str = os.getenv("SUPABASE_URL", "https://your-supabase-project.supabase.co")
+    SUPABASE_KEY: str = os.getenv("SUPABASE_KEY", "")
+    SUPABASE_SERVICE_ROLE_KEY: str = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "")
+    OPEN_METEO_API_KEY: str = os.getenv("OPEN_METEO_API_KEY", "")
     DATABASE_URL: str = os.getenv("DATABASE_URL", "sqlite:///./agrismart.db")
     ENVIRONMENT: str = os.getenv("ENVIRONMENT", "development")
     FRONTEND_ORIGIN: str = os.getenv("FRONTEND_ORIGIN", "http://localhost:5173")
-    AUTH_PROVIDER: str = os.getenv("AUTH_PROVIDER", "dev_otp")
+    AUTH_PROVIDER: str = os.getenv("AUTH_PROVIDER", "dev_direct")
 
 settings = Settings()

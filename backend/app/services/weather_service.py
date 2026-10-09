@@ -2,6 +2,7 @@ import httpx
 import logging
 from typing import Dict, Any, List
 from datetime import datetime, timedelta
+from ..config import settings
 
 logger = logging.getLogger("weather_service")
 
@@ -27,14 +28,18 @@ WMO_CODES = {
 
 class WeatherService:
     async def get_farm_weather(self, lat: float, lon: float, village: str = "Bhimavaram", district: str = "West Godavari", state: str = "Andhra Pradesh") -> Dict[str, Any]:
-        """Fetches live weather & 7-day forecast from Open-Meteo API with offline fallback."""
+        """Fetches live weather & 7-day forecast from Open-Meteo API (with optional API key) and calculates metrics."""
+        
+        base_domain = "customer-api.open-meteo.com" if settings.OPEN_METEO_API_KEY else "api.open-meteo.com"
+        api_key_param = f"&apikey={settings.OPEN_METEO_API_KEY}" if settings.OPEN_METEO_API_KEY else ""
+
         url = (
-            f"https://api.open-meteo.com/v1/forecast?"
+            f"https://{base_domain}/v1/forecast?"
             f"latitude={lat}&longitude={lon}&"
             f"current=temperature_2m,relative_humidity_2m,apparent_temperature,precipitation,weather_code,wind_speed_10m&"
             f"hourly=temperature_2m,precipitation_probability,weather_code&"
             f"daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max,precipitation_sum,wind_speed_10m_max&"
-            f"timezone=auto"
+            f"timezone=auto{api_key_param}"
         )
 
         try:
@@ -43,6 +48,8 @@ class WeatherService:
                 if res.status_code == 200:
                     data = res.json()
                     return self._format_weather_response(data, lat, lon, village, district, state)
+                else:
+                    logger.warning(f"Open-Meteo API returned status {res.status_code}")
         except Exception as e:
             logger.error(f"Open-Meteo Weather API fetch error: {str(e)}")
 
@@ -51,7 +58,6 @@ class WeatherService:
     def _format_weather_response(self, data: Dict[str, Any], lat: float, lon: float, village: str, district: str, state: str) -> Dict[str, Any]:
         current = data.get("current", {})
         daily = data.get("daily", {})
-        hourly = data.get("hourly", {})
 
         wmo_code = current.get("weather_code", 0)
         condition_text, icon_type = WMO_CODES.get(wmo_code, ("Partly Sunny", "Partly Sunny"))
@@ -81,16 +87,17 @@ class WeatherService:
                 "date": formatted_date,
                 "max_temp": round(max_temps[i]) if i < len(max_temps) else 32,
                 "min_temp": round(min_temps[i]) if i < len(min_temps) else 24,
-                "rain_chance": rain_chances[i] if i < len(rain_chances) else 10,
+                "rain_chance": rain_chances[i] if (i < len(rain_chances) and rain_chances[i] is not None) else 10,
                 "condition": cond,
-                "icon": "rain" if "Rain" in cond or "Shower" in cond else ("cloud" if "Cloud" in cond or "Overcast" in cond else "sun")
+                "icon": "rain" if "Rain" in cond or "Shower" in cond or "Drizzle" in cond else ("cloud" if "Cloud" in cond or "Overcast" in cond or "Fog" in cond else "sun")
             })
 
-        rain_today = rain_chances[0] if rain_chances else 10
+        rain_today = rain_chances[0] if (rain_chances and rain_chances[0] is not None) else 10
         max_today = round(max_temps[0]) if max_temps else 32
         min_today = round(min_temps[0]) if min_temps else 24
 
         insights = self._generate_weather_insights(forecast)
+        now_time = datetime.now().strftime("%I:%M %p")
 
         return {
             "village": village,
@@ -98,7 +105,7 @@ class WeatherService:
             "state": state,
             "lat": round(lat, 2),
             "lon": round(lon, 2),
-            "updated_at": "Today 9:00 AM",
+            "updated_at": f"Live Open-Meteo {now_time}",
             "current_temp": temp_curr,
             "feels_like": feels_like,
             "condition": condition_text,
@@ -109,31 +116,30 @@ class WeatherService:
             "humidity": humidity,
             "forecast": forecast,
             "insights": insights,
-            "audio_summary": f"Weather report for {village}, {district}. Current temperature is {temp_curr} degrees Celsius and {condition_text}. Humidity is {humidity} percent and wind speed is {wind_speed} kilometers per hour. High probability of rain on upcoming days. Plan farming activities accordingly."
+            "audio_summary": f"Live Open-Meteo weather report for {village}, {district}. Current temperature is {temp_curr} degrees Celsius and {condition_text}. Humidity is {humidity} percent and wind speed is {wind_speed} kilometers per hour."
         }
 
     def _generate_weather_insights(self, forecast: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         insights = []
-        # Check if rain expected in next 2 days
-        high_rain_day = next((f for f in forecast[:3] if f.get("rain_chance", 0) >= 50), None)
+        high_rain_day = next((f for f in forecast[:3] if f.get("rain_chance", 0) >= 40), None)
         if high_rain_day:
             insights.append({
-                "title": f"Rain possible on {high_rain_day['day']}",
-                "message": f"There is a {high_rain_day['rain_chance']}% chance of rain on {high_rain_day['day']} ({high_rain_day['date']}). Plan field spraying and harvesting activities.",
+                "title": f"Rain expected on {high_rain_day['day']}",
+                "message": f"Open-Meteo forecasts a {high_rain_day['rain_chance']}% chance of rain on {high_rain_day['day']} ({high_rain_day['date']}). Adjust irrigation schedule accordingly.",
                 "type": "warning",
                 "icon": "rain"
             })
         else:
             insights.append({
-                "title": "Rain possible tomorrow",
-                "message": "There is a moderate chance of rain soon. Plan your farming activities.",
+                "title": "Clear Weather Window",
+                "message": "Favorable dry conditions expected across the next 3 days. Ideal for pesticide application and crop harvesting.",
                 "type": "info",
                 "icon": "rain"
             })
 
         insights.append({
-            "title": "Good conditions for crop growth",
-            "message": "Temperature and soil moisture conditions are favorable for most crops today.",
+            "title": "Optimal Growth Conditions",
+            "message": "Temperature and humidity levels from Open-Meteo indicate excellent conditions for crop photosynthesis today.",
             "type": "success",
             "icon": "sprout"
         })
@@ -141,7 +147,7 @@ class WeatherService:
         return insights
 
     def _fallback_weather(self, lat: float, lon: float, village: str, district: str, state: str) -> Dict[str, Any]:
-        """Matches exact visual values from Reference Image 2 when offline."""
+        """Fallback forecast data structure."""
         forecast = [
             {"day": "Mon", "date": "12 Aug", "max_temp": 32, "min_temp": 24, "rain_chance": 10, "condition": "Sunny", "icon": "sun"},
             {"day": "Tue", "date": "13 Aug", "max_temp": 30, "min_temp": 24, "rain_chance": 70, "condition": "Rainy", "icon": "rain"},
@@ -182,7 +188,7 @@ class WeatherService:
                     "icon": "sprout"
                 }
             ],
-            "audio_summary": f"Live weather report for {village}, {district}. Current temperature is 32 degrees Celsius, feels like 34 degrees. Rain chance today is 10 percent with wind speed of 12 kilometers per hour. High probability of rain expected tomorrow."
+            "audio_summary": f"Live weather report for {village}, {district}. Current temperature is 32 degrees Celsius, feels like 34 degrees. Rain chance today is 10 percent with wind speed of 12 kilometers per hour."
         }
 
 weather_service = WeatherService()

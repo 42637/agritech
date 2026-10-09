@@ -11,7 +11,6 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginComplete }) => 
   const [step, setStep] = useState(1);
   const [farmerName, setFarmerName] = useState('Ramesh Kumar');
   const [phone, setPhone] = useState('+919876543210');
-  const [otp, setOtp] = useState('123456');
 
   const [farmsList, setFarmsList] = useState<Partial<Farm>[]>([
     {
@@ -134,10 +133,10 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginComplete }) => 
             <Sprout className="w-8 h-8 fill-[#087A3D]" />
           </div>
           <h1 className="text-2xl font-black text-[#102D20]">AgriSmart AI</h1>
-          <p className="text-xs text-[#5A6E65] font-semibold">Farmer Registration & Parcel Setup</p>
+          <p className="text-xs text-[#5A6E65] font-semibold">Farmer Direct Login & Parcel Setup</p>
 
           <div className="flex justify-center gap-1.5 pt-2">
-            {[1, 2, 3].map((i) => (
+            {[1, 2].map((i) => (
               <div
                 key={i}
                 className={`h-1.5 rounded-full transition-all duration-300 ${
@@ -181,40 +180,17 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginComplete }) => 
               onClick={() => setStep(2)}
               className="w-full bg-[#087A3D] text-white font-bold py-3.5 rounded-2xl flex items-center justify-center gap-2 hover:bg-[#07552F] transition-colors shadow-md"
             >
-              <span>Verify & Continue</span>
+              <span>Continue to Farm Setup</span>
               <ArrowRight className="w-5 h-5" />
             </button>
           </div>
         )}
 
         {step === 2 && (
-          <div className="space-y-4 text-center">
-            <h2 className="font-extrabold text-base text-[#102D20]">Step 2: Enter OTP Code</h2>
-            <p className="text-xs text-gray-500">We sent an OTP code to {phone}. Use dev code <span className="font-bold text-[#087A3D]">123456</span>.</p>
-
-            <input
-              type="text"
-              value={otp}
-              onChange={(e) => setOtp(e.target.value)}
-              maxLength={6}
-              className="w-44 text-center tracking-widest text-2xl font-black bg-gray-50 border border-gray-300 rounded-2xl py-3 text-[#102D20] mx-auto block focus:border-[#087A3D] focus:outline-hidden"
-            />
-
-            <button
-              onClick={() => setStep(3)}
-              className="w-full bg-[#087A3D] text-white font-bold py-3.5 rounded-2xl flex items-center justify-center gap-2 hover:bg-[#07552F] transition-colors shadow-md"
-            >
-              <CheckCircle2 className="w-5 h-5" />
-              <span>Verify OTP</span>
-            </button>
-          </div>
-        )}
-
-        {step === 3 && (
           <div className="space-y-4">
             <div className="flex items-center justify-between border-b pb-2">
               <h2 className="font-extrabold text-base text-[#102D20]">
-                Step 3: Farm Parcel ({currentFarmIndex + 1}/{farmsList.length})
+                Step 2: Farm Parcel ({currentFarmIndex + 1}/{farmsList.length})
               </h2>
               {farmsList.length > 1 && (
                 <button
