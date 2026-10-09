@@ -212,6 +212,18 @@ export const GreenGramCropIcon: React.FC = () => (
   </div>
 );
 
+// 13. Sesame (Til Seed Pods)
+export const SesameCropIcon: React.FC = () => (
+  <div className="w-12 h-12 rounded-2xl bg-[#FFFBEB] border border-amber-200/80 flex items-center justify-center p-1.5 shadow-2xs">
+    <svg viewBox="0 0 48 48" className="w-9 h-9 drop-shadow-xs">
+      <path d="M20 38 Q24 22 28 10" stroke="#15803D" strokeWidth="2.5" fill="none" />
+      <rect x="21" y="18" width="6" height="12" rx="3" fill="#D97706" />
+      <circle cx="24" cy="22" r="1.5" fill="#FEF3C7" />
+      <circle cx="24" cy="26" r="1.5" fill="#FEF3C7" />
+    </svg>
+  </div>
+);
+
 // Crop Icon Selector Component
 export const CropIconMapper: React.FC<{ cropId: string }> = ({ cropId }) => {
   switch (cropId) {
@@ -239,6 +251,8 @@ export const CropIconMapper: React.FC<{ cropId: string }> = ({ cropId }) => {
       return <BlackGramCropIcon />;
     case 'Green Gram':
       return <GreenGramCropIcon />;
+    case 'Sesame':
+      return <SesameCropIcon />;
     default:
       return <PaddyCropIcon />;
   }
