@@ -304,7 +304,7 @@ export const CropRecommendationScreen: React.FC<CropRecommendationScreenProps> =
             >
               <div className="flex items-start gap-3.5">
                 <div className="shrink-0 mt-0.5">
-                  <CropIconMapper cropId={crop.id} />
+                  <CropIconMapper cropId={crop.id} size="lg" />
                 </div>
                 <div className="space-y-1">
                   <div className="flex items-center gap-2">
