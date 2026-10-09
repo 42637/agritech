@@ -1,0 +1,31 @@
+# Dependencies
+node_modules/
+frontend/node_modules/
+venv/
+env/
+ENV/
+
+# Build outputs
+dist/
+frontend/dist/
+build/
+
+# Python cache & databases
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+*.db
+*.sqlite3
+backend/app/agrismart.db
+agrismart.db
+
+# Environment variables
+.env
+.env.local
+
+# IDE & OS files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
