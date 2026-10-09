@@ -13,7 +13,8 @@ import {
   Lightbulb,
   AlertTriangle,
   MapPin,
-  ArrowRight
+  ArrowRight,
+  ChevronDown
 } from 'lucide-react';
 import type { Farm } from '../services/api';
 import { CropIconMapper } from '../components/CropIcons';
@@ -26,11 +27,12 @@ interface CropRecommendationScreenProps {
   onNavigateToIrrigation?: (cropName: string) => void;
 }
 
-interface CropItem {
+export interface CropItem {
   id: string;
   name: string;
   suitability: 'High suitability' | 'Suitable' | 'Alternative option';
   suitabilityType: 'best' | 'good' | 'alternative';
+  seasonType: 'Kharif' | 'Rabi' | 'Pre-summer';
   season: string;
   phRange: string;
   yieldEstimate: string;
@@ -48,17 +50,19 @@ export const CropRecommendationScreen: React.FC<CropRecommendationScreenProps> =
   onNavigateToIrrigation
 }) => {
   const [activeView, setActiveView] = useState<'main' | 'detail' | 'irrigation' | 'multicrop'>('main');
+  const [selectedSeason, setSelectedSeason] = useState<'Kharif' | 'Rabi' | 'Pre-summer' | 'All'>('Kharif');
   const [filterTab, setFilterTab] = useState<'all' | 'best' | 'good' | 'alternative'>('best');
   const [detailCrop, setDetailCrop] = useState<CropItem | null>(null);
   const [detailTab, setDetailTab] = useState<'Overview' | 'Irrigation' | 'Season' | 'Past Data'>('Overview');
   const [selectedMultiCrops, setSelectedMultiCrops] = useState<string[]>(['Paddy', 'Maize', 'Groundnut']);
   const [waterSource, setWaterSource] = useState<string>('Canal');
+  const [showSeasonDropdown, setShowSeasonDropdown] = useState<boolean>(false);
 
   const defaultFarms = [
-    { id: 1, village: 'Bhimavaram', acreage: 2.5 },
-    { id: 2, village: 'Tanuku', acreage: 1.8 },
-    { id: 3, village: 'Narsapuram', acreage: 3.2 },
-    { id: 4, village: 'Eluru', acreage: 1.0 }
+    { id: 1, village: 'Bhimavaram', acreage: 2.5, state: 'Andhra Pradesh' },
+    { id: 2, village: 'Tanuku', acreage: 1.8, state: 'Andhra Pradesh' },
+    { id: 3, village: 'Narsapuram', acreage: 3.2, state: 'Andhra Pradesh' },
+    { id: 4, village: 'Eluru', acreage: 1.0, state: 'Andhra Pradesh' }
   ];
 
   const displayFarms = farms.length > 0 ? farms : defaultFarms;
@@ -70,6 +74,7 @@ export const CropRecommendationScreen: React.FC<CropRecommendationScreenProps> =
       name: 'Paddy',
       suitability: 'High suitability',
       suitabilityType: 'best',
+      seasonType: 'Kharif',
       season: 'Jun – Oct (Kharif)',
       phRange: '6.0 – 7.5',
       yieldEstimate: '4.5 – 5.5 tons/acre',
@@ -95,12 +100,13 @@ export const CropRecommendationScreen: React.FC<CropRecommendationScreenProps> =
       name: 'Maize',
       suitability: 'Suitable',
       suitabilityType: 'good',
+      seasonType: 'Rabi',
       season: 'Nov – Feb (Rabi)',
       phRange: '6.0 – 7.5',
       yieldEstimate: '3.8 – 4.5 tons/acre',
       waterReq: '20 – 25 mm per irrigation',
       bullets: [
-        'Good for this season',
+        'Good for Rabi season',
         'Tolerant to soil conditions',
         'Moderate water requirement'
       ],
@@ -120,7 +126,8 @@ export const CropRecommendationScreen: React.FC<CropRecommendationScreenProps> =
       name: 'Chilli',
       suitability: 'Suitable',
       suitabilityType: 'good',
-      season: 'Aug – Mar',
+      seasonType: 'Rabi',
+      season: 'Aug – Mar (Rabi)',
       phRange: '6.0 – 7.0',
       yieldEstimate: '2.5 – 3.2 tons/acre',
       waterReq: '18 – 22 mm per irrigation',
@@ -145,6 +152,7 @@ export const CropRecommendationScreen: React.FC<CropRecommendationScreenProps> =
       name: 'Groundnut',
       suitability: 'Alternative option',
       suitabilityType: 'alternative',
+      seasonType: 'Pre-summer',
       season: 'Mar – May (Pre-summer)',
       phRange: '6.0 – 7.0',
       yieldEstimate: '1.8 – 2.4 tons/acre',
@@ -164,12 +172,62 @@ export const CropRecommendationScreen: React.FC<CropRecommendationScreenProps> =
         { id: 'Maize', name: 'Maize', timing: 'Strip crop' },
         { id: 'Red Gram', name: 'Red Gram', timing: 'Row intercrop' }
       ]
+    },
+    {
+      id: 'Turmeric',
+      name: 'Turmeric',
+      suitability: 'Suitable',
+      suitabilityType: 'good',
+      seasonType: 'Kharif',
+      season: 'Jun – Feb (Kharif-Long)',
+      phRange: '5.5 – 7.5',
+      yieldEstimate: '8.0 – 10.0 tons/acre',
+      waterReq: '22 – 28 mm per irrigation',
+      bullets: [
+        'Long duration cash crop',
+        'Matches regional climate',
+        'High market value'
+      ],
+      whyRecommended: [
+        'High financial return per acre',
+        'Suitable for loamy & alluvial soil',
+        'Medicinal and spice commercial demand'
+      ],
+      interCrops: [
+        { id: 'Maize', name: 'Maize', timing: 'Shade intercrop' }
+      ]
+    },
+    {
+      id: 'Cotton',
+      name: 'Cotton',
+      suitability: 'Alternative option',
+      suitabilityType: 'alternative',
+      seasonType: 'Kharif',
+      season: 'Jul – Dec (Kharif)',
+      phRange: '6.0 – 8.0',
+      yieldEstimate: '1.2 – 1.8 tons/acre',
+      waterReq: '20 – 26 mm per irrigation',
+      bullets: [
+        'Deep root system',
+        'Drought tolerant',
+        'Good for black clay soil'
+      ],
+      whyRecommended: [
+        'Resistant to dry spells',
+        'Established textile mill buyers nearby'
+      ],
+      interCrops: [
+        { id: 'Green Gram', name: 'Green Gram', timing: 'Intercrop' }
+      ]
     }
   ];
 
-  const filteredCrops = filterTab === 'all'
-    ? crops
-    : crops.filter((c) => c.suitabilityType === filterTab);
+  // Filter crops by Season AND Suitability
+  const filteredCrops = crops.filter((c) => {
+    const matchesSeason = selectedSeason === 'All' || c.seasonType === selectedSeason;
+    const matchesSuitability = filterTab === 'all' || c.suitabilityType === filterTab;
+    return matchesSeason && matchesSuitability;
+  });
 
   const toggleMultiCrop = (cropId: string) => {
     if (selectedMultiCrops.includes(cropId)) {
@@ -220,9 +278,9 @@ export const CropRecommendationScreen: React.FC<CropRecommendationScreenProps> =
               <button
                 key={farm.id}
                 onClick={() => onSelectFarm && onSelectFarm(farm as any)}
-                className={`flex-none px-3 py-1.5 rounded-2xl border transition-all flex items-center gap-1.5 text-xs font-bold ${
+                className={`flex-none px-3.5 py-2 rounded-2xl border transition-all flex items-center gap-1.5 text-xs font-extrabold ${
                   isSelected
-                    ? 'bg-[#E7F7E4] border-[#087A3D] text-[#087A3D] ring-2 ring-[#087A3D]/20'
+                    ? 'bg-[#E7F7E4] border-[#087A3D] text-[#087A3D] ring-2 ring-[#087A3D]/20 shadow-2xs'
                     : 'bg-white border-gray-200 text-gray-700'
                 }`}
               >
@@ -233,24 +291,56 @@ export const CropRecommendationScreen: React.FC<CropRecommendationScreenProps> =
           })}
         </div>
 
-        {/* Current Season Banner */}
-        <div className="bg-[#FFFBEB] border border-amber-200/80 rounded-2xl p-3.5 flex items-center justify-between shadow-2xs">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-2xl bg-amber-100/70 flex items-center justify-center text-amber-600 shrink-0">
-              <Sun className="w-6 h-6 fill-amber-400" />
+        {/* Interactive Season Selector Banner */}
+        <div className="bg-[#FFFBEB] border border-amber-200/80 rounded-2xl p-3.5 shadow-2xs space-y-2 relative">
+          <div
+            onClick={() => setShowSeasonDropdown(!showSeasonDropdown)}
+            className="flex items-center justify-between cursor-pointer"
+          >
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-2xl bg-amber-100 flex items-center justify-center text-amber-600 shrink-0 shadow-2xs">
+                <Sun className="w-6 h-6 fill-amber-400" />
+              </div>
+              <div>
+                <p className="text-xs font-bold text-[#102D20]">Current Season Filter</p>
+                <p className="text-xs text-amber-800 font-extrabold flex items-center gap-1">
+                  <span>
+                    {selectedSeason === 'Kharif' && 'Kharif (Jun – Oct)'}
+                    {selectedSeason === 'Rabi' && 'Rabi (Nov – Feb)'}
+                    {selectedSeason === 'Pre-summer' && 'Pre-summer (Mar – May)'}
+                    {selectedSeason === 'All' && 'All Seasons (Year Round)'}
+                  </span>
+                </p>
+              </div>
             </div>
-            <div>
-              <p className="text-xs font-bold text-[#102D20]">Current Season</p>
-              <p className="text-xs text-amber-800 font-semibold">Kharif (Jun – Oct)</p>
-            </div>
+            <ChevronDown className={`w-5 h-5 text-gray-500 transition-transform ${showSeasonDropdown ? 'rotate-180' : ''}`} />
           </div>
-          <ChevronRight className="w-5 h-5 text-gray-400" />
+
+          {/* Season Selector Tabs */}
+          <div className="flex gap-1.5 pt-1 border-t border-amber-200/60 overflow-x-auto no-scrollbar">
+            {(['Kharif', 'Rabi', 'Pre-summer', 'All'] as const).map((s) => (
+              <button
+                key={s}
+                onClick={() => setSelectedSeason(s)}
+                className={`px-3 py-1.5 rounded-xl text-[11px] font-extrabold transition-all shrink-0 ${
+                  selectedSeason === s
+                    ? 'bg-[#087A3D] text-white shadow-xs'
+                    : 'bg-white/80 border border-amber-200 text-amber-900 hover:bg-white'
+                }`}
+              >
+                {s === 'Kharif' && '🌾 Kharif (Jun-Oct)'}
+                {s === 'Rabi' && '🌽 Rabi (Nov-Feb)'}
+                {s === 'Pre-summer' && '🥜 Pre-summer (Mar-May)'}
+                {s === 'All' && '🗓️ All Seasons'}
+              </button>
+            ))}
+          </div>
         </div>
 
         {/* Section Heading & Filters */}
         <div className="space-y-2.5 pt-1">
           <div>
-            <h3 className="font-black text-base text-[#102D20]">Recommended Crops</h3>
+            <h3 className="font-black text-base text-[#102D20]">Recommended Crops ({selectedSeason})</h3>
             <p className="text-xs text-gray-500 font-medium">Based on your soil pH, local climate, past data and market trends</p>
           </div>
 
@@ -291,51 +381,66 @@ export const CropRecommendationScreen: React.FC<CropRecommendationScreenProps> =
 
         {/* Crop Cards List */}
         <div className="space-y-3">
-          {filteredCrops.map((crop) => (
-            <div
-              key={crop.id}
-              onClick={() => {
-                setDetailCrop(crop);
-                setActiveView('detail');
-              }}
-              className={`bg-white border rounded-3xl p-4 shadow-xs hover:border-[#087A3D] transition-all cursor-pointer flex items-center justify-between gap-3 ${
-                crop.suitabilityType === 'best' ? 'border-green-300 ring-1 ring-green-200' : 'border-gray-200'
-              }`}
-            >
-              <div className="flex items-start gap-3.5">
-                <div className="shrink-0 mt-0.5">
-                  <CropIconMapper cropId={crop.id} size="lg" />
-                </div>
-                <div className="space-y-1">
-                  <div className="flex items-center gap-2">
-                    <h4 className="font-black text-base text-[#102D20]">{crop.name}</h4>
-                    <span
-                      className={`text-[10px] font-extrabold px-2.5 py-0.5 rounded-full border ${
-                        crop.suitabilityType === 'best'
-                          ? 'bg-[#E7F7E4] text-[#087A3D] border-green-200'
-                          : crop.suitabilityType === 'good'
-                          ? 'bg-sky-50 text-sky-700 border-sky-200'
-                          : 'bg-amber-50 text-amber-800 border-amber-200'
-                      }`}
-                    >
-                      {crop.suitability}
-                    </span>
+          {filteredCrops.length > 0 ? (
+            filteredCrops.map((crop) => (
+              <div
+                key={crop.id}
+                onClick={() => {
+                  setDetailCrop(crop);
+                  setActiveView('detail');
+                }}
+                className={`bg-white border rounded-3xl p-4 shadow-xs hover:border-[#087A3D] transition-all cursor-pointer flex items-center justify-between gap-3 ${
+                  crop.suitabilityType === 'best' ? 'border-green-300 ring-1 ring-green-200' : 'border-gray-200'
+                }`}
+              >
+                <div className="flex items-start gap-3.5">
+                  <div className="shrink-0 mt-0.5">
+                    <CropIconMapper cropId={crop.id} size="lg" />
                   </div>
+                  <div className="space-y-1">
+                    <div className="flex items-center gap-2">
+                      <h4 className="font-black text-base text-[#102D20]">{crop.name}</h4>
+                      <span
+                        className={`text-[10px] font-extrabold px-2.5 py-0.5 rounded-full border ${
+                          crop.suitabilityType === 'best'
+                            ? 'bg-[#E7F7E4] text-[#087A3D] border-green-200'
+                            : crop.suitabilityType === 'good'
+                            ? 'bg-sky-50 text-sky-700 border-sky-200'
+                            : 'bg-amber-50 text-amber-800 border-amber-200'
+                        }`}
+                      >
+                        {crop.suitability}
+                      </span>
+                    </div>
 
-                  <ul className="space-y-0.5 text-xs text-gray-600 font-medium">
-                    {crop.bullets.map((b, i) => (
-                      <li key={i} className="flex items-center gap-1.5 text-xs">
-                        <Check className="w-3.5 h-3.5 text-[#087A3D] stroke-[2.5]" />
-                        <span>{b}</span>
-                      </li>
-                    ))}
-                  </ul>
+                    <ul className="space-y-0.5 text-xs text-gray-600 font-medium">
+                      {crop.bullets.map((b, i) => (
+                        <li key={i} className="flex items-center gap-1.5 text-xs">
+                          <Check className="w-3.5 h-3.5 text-[#087A3D] stroke-[2.5]" />
+                          <span>{b}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
                 </div>
-              </div>
 
-              <ChevronRight className="w-5 h-5 text-gray-400 shrink-0" />
+                <ChevronRight className="w-5 h-5 text-gray-400 shrink-0" />
+              </div>
+            ))
+          ) : (
+            <div className="bg-gray-50 border border-gray-200 rounded-3xl p-6 text-center space-y-2">
+              <p className="font-bold text-sm text-gray-700">No crops found for this season & filter combination</p>
+              <button
+                onClick={() => {
+                  setSelectedSeason('All');
+                  setFilterTab('all');
+                }}
+                className="text-xs font-extrabold text-[#087A3D] hover:underline"
+              >
+                View all crops across all seasons &gt;
+              </button>
             </div>
-          ))}
+          )}
         </div>
 
         {/* View Multi-Crop Plan Action Button */}
@@ -364,7 +469,7 @@ export const CropRecommendationScreen: React.FC<CropRecommendationScreenProps> =
             <button onClick={() => setActiveView('main')} className="p-2 rounded-full hover:bg-gray-100">
               <ArrowLeft className="w-6 h-6 text-[#102D20]" />
             </button>
-            <CropIconMapper cropId={detailCrop.id} />
+            <CropIconMapper cropId={detailCrop.id} size="md" />
             <div>
               <h2 className="font-extrabold text-xl text-[#102D20] leading-tight">{detailCrop.name}</h2>
               <p className="text-xs text-[#5A6E65] font-semibold">Crop insights for better planning</p>
@@ -467,7 +572,7 @@ export const CropRecommendationScreen: React.FC<CropRecommendationScreenProps> =
           <div className="grid grid-cols-2 gap-2.5">
             {detailCrop.interCrops.map((ic) => (
               <div key={ic.id} className="bg-white border border-gray-100 rounded-2xl p-3 flex items-center gap-3 shadow-2xs">
-                <CropIconMapper cropId={ic.id} />
+                <CropIconMapper cropId={ic.id} size="sm" />
                 <div>
                   <p className="font-extrabold text-xs text-[#102D20]">{ic.name}</p>
                   <p className="text-[10px] text-gray-500 font-medium">{ic.timing}</p>
@@ -498,7 +603,7 @@ export const CropRecommendationScreen: React.FC<CropRecommendationScreenProps> =
   }
 
   // -------------------------------------------------------------
-  // VIEW 3: IRRIGATION PLAN SCREEN (Reference Image Screen 3)
+  // VIEW 3: IRRIGATION PLAN SCREEN
   // -------------------------------------------------------------
   if (activeView === 'irrigation') {
     const crop = detailCrop || crops[0];
@@ -510,7 +615,7 @@ export const CropRecommendationScreen: React.FC<CropRecommendationScreenProps> =
             <button onClick={() => setActiveView('detail')} className="p-2 rounded-full hover:bg-gray-100">
               <ArrowLeft className="w-6 h-6 text-[#102D20]" />
             </button>
-            <CropIconMapper cropId={crop.id} />
+            <CropIconMapper cropId={crop.id} size="md" />
             <div>
               <h2 className="font-extrabold text-xl text-[#102D20] leading-tight">Irrigation Plan</h2>
               <p className="text-xs text-[#5A6E65] font-semibold">Optimized for your field and weather</p>
@@ -521,7 +626,7 @@ export const CropRecommendationScreen: React.FC<CropRecommendationScreenProps> =
         {/* Selected Crop Pill */}
         <div className="bg-white border border-gray-100 rounded-3xl p-3.5 flex items-center justify-between shadow-2xs">
           <div className="flex items-center gap-3">
-            <CropIconMapper cropId={crop.id} />
+            <CropIconMapper cropId={crop.id} size="md" />
             <div>
               <div className="flex items-center gap-2">
                 <h4 className="font-black text-base text-[#102D20]">{crop.name}</h4>
@@ -608,7 +713,7 @@ export const CropRecommendationScreen: React.FC<CropRecommendationScreenProps> =
             <div>
               <p className="text-[10px] text-gray-500 font-semibold">Water Amount</p>
               <p className="text-xl font-black text-sky-700">25 – 30 mm</p>
-              <p className="text-[10px] text-gray-500 font-medium">(~1.8 lakh liters / 2.5 acres)</p>
+              <p className="text-[10px] text-gray-500 font-medium">(~1.8 lakh liters / {activeFarm.acreage || 2.5} acres)</p>
             </div>
 
             <div className="border-l border-gray-100 pl-3">
@@ -657,7 +762,7 @@ export const CropRecommendationScreen: React.FC<CropRecommendationScreenProps> =
   }
 
   // -------------------------------------------------------------
-  // VIEW 4: MULTI-CROP PLAN SCREEN (Reference Image Screen 4)
+  // VIEW 4: FARM-SPECIFIC MULTI-CROP PLAN SCREEN
   // -------------------------------------------------------------
   return (
     <div className="pb-24 max-w-md mx-auto px-4 pt-3 space-y-4 font-sans">
@@ -670,7 +775,7 @@ export const CropRecommendationScreen: React.FC<CropRecommendationScreenProps> =
           <div className="w-10 h-10 rounded-2xl bg-amber-50 border border-amber-200/80 flex items-center justify-center p-1 shadow-2xs">
             <svg viewBox="0 0 48 48" className="w-8 h-8">
               <path d="M8 38 Q24 24 40 38 Q32 44 24 44 Q16 44 8 38 Z" fill="#6E4729" />
-              <path d="M24 35 C24 26 23 20 22 14" stroke="#15803D" strokeWidth="3.5" fill="none" />
+              <path d="M24 35 C24 26 23 20 22 14" stroke="#15803D" strokeWidth="3.5" strokeLinecap="round" fill="none" />
               <path d="M23 22 C13 18 9 9 17 7 C23 7 24 16 23 22 Z" fill="#22C55E" />
               <path d="M23 18 C33 14 37 5 29 3 C23 3 22 12 23 18 Z" fill="#15803D" />
             </svg>
@@ -682,11 +787,48 @@ export const CropRecommendationScreen: React.FC<CropRecommendationScreenProps> =
         </div>
       </div>
 
+      {/* Selected Farm Header Pill */}
+      <div className="bg-[#E7F7E4]/90 border border-green-300 rounded-3xl p-4 shadow-2xs space-y-2">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2.5">
+            <div className="w-8 h-8 rounded-full bg-[#087A3D] text-white flex items-center justify-center shrink-0">
+              <MapPin className="w-4 h-4 fill-current" />
+            </div>
+            <div>
+              <h3 className="font-black text-sm text-[#102D20]">{activeFarm.village} Farm</h3>
+              <p className="text-xs text-gray-600 font-semibold">
+                Area: {activeFarm.acreage || 2.5} acres • Soil pH: 6.8 (Clay-Loam)
+              </p>
+            </div>
+          </div>
+        </div>
+
+        {/* Farm Switcher Pills */}
+        <div className="flex gap-1.5 pt-1 overflow-x-auto no-scrollbar">
+          {displayFarms.map((f) => {
+            const isF = activeFarm.id === f.id;
+            return (
+              <button
+                key={f.id}
+                onClick={() => onSelectFarm && onSelectFarm(f as any)}
+                className={`px-3 py-1 rounded-xl text-xs font-bold transition-all shrink-0 ${
+                  isF
+                    ? 'bg-[#087A3D] text-white shadow-2xs'
+                    : 'bg-white text-gray-700 border border-gray-200 hover:bg-gray-50'
+                }`}
+              >
+                {f.village} ({f.acreage} ac)
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
       {/* Your Interest Crop Selector Grid */}
       <div className="space-y-2">
         <div>
           <h3 className="font-extrabold text-sm text-[#102D20]">Your Interest</h3>
-          <p className="text-xs text-gray-500 font-medium">Select up to 3 crops</p>
+          <p className="text-xs text-gray-500 font-medium">Select up to 3 crops for {activeFarm.village} Farm</p>
         </div>
 
         <div className="grid grid-cols-3 gap-2.5 pt-1">
@@ -710,7 +852,7 @@ export const CropRecommendationScreen: React.FC<CropRecommendationScreenProps> =
                   {isSel && <Check className="w-3 h-3 stroke-[3]" />}
                 </div>
 
-                <CropIconMapper cropId={cropId} />
+                <CropIconMapper cropId={cropId} size="md" />
                 <span className="font-extrabold text-xs text-[#102D20]">{cropId}</span>
               </button>
             );
@@ -718,9 +860,12 @@ export const CropRecommendationScreen: React.FC<CropRecommendationScreenProps> =
         </div>
       </div>
 
-      {/* Recommended Plan Timeline (Next 1 Year) */}
+      {/* Recommended Plan Timeline (Next 1 Year) for Active Farm */}
       <div className="space-y-2.5 pt-1">
-        <h3 className="font-extrabold text-sm text-[#102D20]">Recommended Plan (Next 1 Year)</h3>
+        <div className="flex items-center justify-between">
+          <h3 className="font-extrabold text-sm text-[#102D20]">Recommended Plan (Next 1 Year)</h3>
+          <span className="text-[11px] font-extrabold text-[#087A3D]">Target: {activeFarm.village}</span>
+        </div>
 
         <div className="space-y-3 relative pl-3 border-l-2 border-dashed border-gray-200 ml-3">
           {/* Kharif */}
@@ -728,11 +873,11 @@ export const CropRecommendationScreen: React.FC<CropRecommendationScreenProps> =
             <div className="absolute -left-[23px] top-1.5 w-3.5 h-3.5 rounded-full bg-emerald-500 ring-4 ring-emerald-100" />
             <div className="bg-white border border-gray-100 rounded-2xl p-3 flex items-center justify-between shadow-2xs">
               <div className="flex items-center gap-3">
-                <CropIconMapper cropId="Paddy" />
+                <CropIconMapper cropId={selectedMultiCrops[0] || 'Paddy'} size="md" />
                 <div>
                   <p className="text-[10px] font-bold text-emerald-700 uppercase">Kharif (Jun – Oct)</p>
-                  <h4 className="font-extrabold text-base text-[#102D20]">Paddy</h4>
-                  <p className="text-[10px] text-amber-800 font-semibold">Main crop</p>
+                  <h4 className="font-extrabold text-base text-[#102D20]">{selectedMultiCrops[0] || 'Paddy'}</h4>
+                  <p className="text-[10px] text-amber-800 font-semibold">Main crop ({activeFarm.acreage || 2.5} acres)</p>
                 </div>
               </div>
               <ChevronRight className="w-4 h-4 text-gray-400" />
@@ -744,10 +889,10 @@ export const CropRecommendationScreen: React.FC<CropRecommendationScreenProps> =
             <div className="absolute -left-[23px] top-1.5 w-3.5 h-3.5 rounded-full bg-amber-400 ring-4 ring-amber-100" />
             <div className="bg-white border border-gray-100 rounded-2xl p-3 flex items-center justify-between shadow-2xs">
               <div className="flex items-center gap-3">
-                <CropIconMapper cropId="Maize" />
+                <CropIconMapper cropId={selectedMultiCrops[1] || 'Maize'} size="md" />
                 <div>
                   <p className="text-[10px] font-bold text-amber-700 uppercase">Rabi (Nov – Feb)</p>
-                  <h4 className="font-extrabold text-base text-[#102D20]">Maize</h4>
+                  <h4 className="font-extrabold text-base text-[#102D20]">{selectedMultiCrops[1] || 'Maize'}</h4>
                   <p className="text-[10px] text-amber-800 font-semibold">Follow-up crop</p>
                 </div>
               </div>
@@ -760,10 +905,10 @@ export const CropRecommendationScreen: React.FC<CropRecommendationScreenProps> =
             <div className="absolute -left-[23px] top-1.5 w-3.5 h-3.5 rounded-full bg-orange-400 ring-4 ring-orange-100" />
             <div className="bg-white border border-gray-100 rounded-2xl p-3 flex items-center justify-between shadow-2xs">
               <div className="flex items-center gap-3">
-                <CropIconMapper cropId="Groundnut" />
+                <CropIconMapper cropId={selectedMultiCrops[2] || 'Groundnut'} size="md" />
                 <div>
                   <p className="text-[10px] font-bold text-orange-700 uppercase">Pre-summer (Mar – May)</p>
-                  <h4 className="font-extrabold text-base text-[#102D20]">Groundnut</h4>
+                  <h4 className="font-extrabold text-base text-[#102D20]">{selectedMultiCrops[2] || 'Groundnut'}</h4>
                   <p className="text-[10px] text-amber-800 font-semibold">Mid crop (optional)</p>
                 </div>
               </div>
@@ -777,29 +922,29 @@ export const CropRecommendationScreen: React.FC<CropRecommendationScreenProps> =
       <div className="bg-[#E7F7E4]/80 border border-green-200/90 rounded-3xl p-4 shadow-xs space-y-2">
         <div className="flex items-center gap-2 text-[#07552F]">
           <Sprout className="w-5 h-5" />
-          <h4 className="font-extrabold text-sm">Why this plan?</h4>
+          <h4 className="font-extrabold text-sm">Why this plan for {activeFarm.village}?</h4>
         </div>
 
         <ul className="space-y-1.5 text-xs text-[#102D20] font-semibold">
           <li className="flex items-center gap-2">
             <Check className="w-4 h-4 text-[#087A3D] stroke-[3]" />
-            <span>Matches your soil pH (6.8)</span>
+            <span>Matches soil pH 6.8 & clay-loam structure</span>
           </li>
           <li className="flex items-center gap-2">
             <Check className="w-4 h-4 text-[#087A3D] stroke-[3]" />
-            <span>Suitable for local climate and water availability</span>
+            <span>Optimized for {activeFarm.village} local rainfall & canal water</span>
           </li>
           <li className="flex items-center gap-2">
             <Check className="w-4 h-4 text-[#087A3D] stroke-[3]" />
-            <span>Based on historical yield data of your area</span>
+            <span>Based on historical yield data of {activeFarm.village} area</span>
           </li>
           <li className="flex items-center gap-2">
             <Check className="w-4 h-4 text-[#087A3D] stroke-[3]" />
-            <span>Helps maintain soil fertility</span>
+            <span>Helps maintain soil nitrogen and organic matter</span>
           </li>
           <li className="flex items-center gap-2">
             <Check className="w-4 h-4 text-[#087A3D] stroke-[3]" />
-            <span>Provides better year-round income</span>
+            <span>Provides better year-round income across 3 seasons</span>
           </li>
         </ul>
       </div>
@@ -810,7 +955,7 @@ export const CropRecommendationScreen: React.FC<CropRecommendationScreenProps> =
           onClick={() => setActiveView('main')}
           className="w-full bg-[#07552F] hover:bg-[#087A3D] text-white font-extrabold py-3.5 px-4 rounded-2xl shadow-md flex items-center justify-center gap-2 transition-all text-sm cursor-pointer"
         >
-          <span>Save Plan</span>
+          <span>Save Plan for {activeFarm.village}</span>
           <ArrowRight className="w-5 h-5" />
         </button>
       </div>
