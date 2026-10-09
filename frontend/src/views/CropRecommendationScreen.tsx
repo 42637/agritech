@@ -863,88 +863,138 @@ export const CropRecommendationScreen: React.FC<CropRecommendationScreenProps> =
       {/* Recommended Plan Timeline (Next 1 Year) for Active Farm */}
       <div className="space-y-2.5 pt-1">
         <div className="flex items-center justify-between">
-          <h3 className="font-extrabold text-sm text-[#102D20]">Recommended Plan (Next 1 Year)</h3>
-          <span className="text-[11px] font-extrabold text-[#087A3D]">Target: {activeFarm.village}</span>
+          <h3 className="font-extrabold text-sm text-[#102D20]">Same-Field Multi-Crop Rotation ({activeFarm.village})</h3>
+          <span className="text-[11px] font-extrabold text-[#087A3D] bg-[#E7F7E4] px-2 py-0.5 rounded-full border border-green-200">
+            {activeFarm.acreage || 2.5} acres
+          </span>
         </div>
 
+        {/* Simultaneous Same-Field Intercropping Cards */}
         <div className="space-y-3 relative pl-3 border-l-2 border-dashed border-gray-200 ml-3">
-          {/* Kharif */}
+          {/* Kharif - Paddy + Green Gram on Same Field */}
           <div className="relative pl-4">
             <div className="absolute -left-[23px] top-1.5 w-3.5 h-3.5 rounded-full bg-emerald-500 ring-4 ring-emerald-100" />
-            <div className="bg-white border border-gray-100 rounded-2xl p-3 flex items-center justify-between shadow-2xs">
-              <div className="flex items-center gap-3">
+            <div className="bg-white border border-gray-100 rounded-2xl p-3.5 space-y-2 shadow-2xs">
+              <div className="flex items-center justify-between">
+                <p className="text-[10px] font-bold text-emerald-700 uppercase tracking-wider">Kharif (Jun – Oct) • Same Field</p>
+                <span className="bg-emerald-100 text-emerald-800 text-[9px] font-extrabold px-2 py-0.5 rounded-full">
+                  Main + Bund Crop
+                </span>
+              </div>
+
+              <div className="flex items-center gap-2.5">
                 <CropIconMapper cropId={selectedMultiCrops[0] || 'Paddy'} size="md" />
+                <span className="text-sm font-black text-gray-400">+</span>
+                <CropIconMapper cropId="Green Gram" size="sm" />
+
                 <div>
-                  <p className="text-[10px] font-bold text-emerald-700 uppercase">Kharif (Jun – Oct)</p>
-                  <h4 className="font-extrabold text-base text-[#102D20]">{selectedMultiCrops[0] || 'Paddy'}</h4>
-                  <p className="text-[10px] text-amber-800 font-semibold">Main crop ({activeFarm.acreage || 2.5} acres)</p>
+                  <h4 className="font-extrabold text-sm text-[#102D20]">
+                    {selectedMultiCrops[0] || 'Paddy'} <span className="text-gray-400 font-normal">&amp;</span> Green Gram
+                  </h4>
+                  <p className="text-[10px] text-gray-500 font-semibold">
+                    Paddy on main field ({activeFarm.acreage || 2.5} acres) + Green Gram on bunds
+                  </p>
                 </div>
               </div>
-              <ChevronRight className="w-4 h-4 text-gray-400" />
+
+              <div className="bg-emerald-50/70 p-2 rounded-xl text-[10px] text-emerald-900 font-medium flex items-center justify-between">
+                <span>🌱 Simultaneous Field Use: Bunds fix nitrogen naturally</span>
+                <span className="font-bold text-[#087A3D]">+18% Revenue</span>
+              </div>
             </div>
           </div>
 
-          {/* Rabi */}
+          {/* Rabi - Maize + Red Gram on Same Field */}
           <div className="relative pl-4">
             <div className="absolute -left-[23px] top-1.5 w-3.5 h-3.5 rounded-full bg-amber-400 ring-4 ring-amber-100" />
-            <div className="bg-white border border-gray-100 rounded-2xl p-3 flex items-center justify-between shadow-2xs">
-              <div className="flex items-center gap-3">
+            <div className="bg-white border border-gray-100 rounded-2xl p-3.5 space-y-2 shadow-2xs">
+              <div className="flex items-center justify-between">
+                <p className="text-[10px] font-bold text-amber-700 uppercase tracking-wider">Rabi (Nov – Feb) • Same Field</p>
+                <span className="bg-amber-100 text-amber-800 text-[9px] font-extrabold px-2 py-0.5 rounded-full">
+                  4:1 Row Intercropping
+                </span>
+              </div>
+
+              <div className="flex items-center gap-2.5">
                 <CropIconMapper cropId={selectedMultiCrops[1] || 'Maize'} size="md" />
+                <span className="text-sm font-black text-gray-400">+</span>
+                <CropIconMapper cropId="Chilli" size="sm" />
+
                 <div>
-                  <p className="text-[10px] font-bold text-amber-700 uppercase">Rabi (Nov – Feb)</p>
-                  <h4 className="font-extrabold text-base text-[#102D20]">{selectedMultiCrops[1] || 'Maize'}</h4>
-                  <p className="text-[10px] text-amber-800 font-semibold">Follow-up crop</p>
+                  <h4 className="font-extrabold text-sm text-[#102D20]">
+                    {selectedMultiCrops[1] || 'Maize'} <span className="text-gray-400 font-normal">&amp;</span> Chilli
+                  </h4>
+                  <p className="text-[10px] text-gray-500 font-semibold">
+                    Maize main rows with Chilli intercropped in alternate rows
+                  </p>
                 </div>
               </div>
-              <ChevronRight className="w-4 h-4 text-gray-400" />
+
+              <div className="bg-amber-50/70 p-2 rounded-xl text-[10px] text-amber-900 font-medium flex items-center justify-between">
+                <span>🌽 Simultaneous Field Use: Shade protection &amp; dual harvest</span>
+                <span className="font-bold text-amber-800">+25% Revenue</span>
+              </div>
             </div>
           </div>
 
-          {/* Pre-summer */}
+          {/* Pre-summer - Groundnut + Sesame on Same Field */}
           <div className="relative pl-4">
             <div className="absolute -left-[23px] top-1.5 w-3.5 h-3.5 rounded-full bg-orange-400 ring-4 ring-orange-100" />
-            <div className="bg-white border border-gray-100 rounded-2xl p-3 flex items-center justify-between shadow-2xs">
-              <div className="flex items-center gap-3">
+            <div className="bg-white border border-gray-100 rounded-2xl p-3.5 space-y-2 shadow-2xs">
+              <div className="flex items-center justify-between">
+                <p className="text-[10px] font-bold text-orange-700 uppercase tracking-wider">Pre-summer (Mar – May) • Same Field</p>
+                <span className="bg-orange-100 text-orange-800 text-[9px] font-extrabold px-2 py-0.5 rounded-full">
+                  Strip Intercropping
+                </span>
+              </div>
+
+              <div className="flex items-center gap-2.5">
                 <CropIconMapper cropId={selectedMultiCrops[2] || 'Groundnut'} size="md" />
+                <span className="text-sm font-black text-gray-400">+</span>
+                <CropIconMapper cropId="Sesame" size="sm" />
+
                 <div>
-                  <p className="text-[10px] font-bold text-orange-700 uppercase">Pre-summer (Mar – May)</p>
-                  <h4 className="font-extrabold text-base text-[#102D20]">{selectedMultiCrops[2] || 'Groundnut'}</h4>
-                  <p className="text-[10px] text-amber-800 font-semibold">Mid crop (optional)</p>
+                  <h4 className="font-extrabold text-sm text-[#102D20]">
+                    {selectedMultiCrops[2] || 'Groundnut'} <span className="text-gray-400 font-normal">&amp;</span> Sesame
+                  </h4>
+                  <p className="text-[10px] text-gray-500 font-semibold">
+                    Groundnut ground-cover with Sesame strip planting
+                  </p>
                 </div>
               </div>
-              <ChevronRight className="w-4 h-4 text-gray-400" />
+
+              <div className="bg-orange-50/70 p-2 rounded-xl text-[10px] text-orange-900 font-medium flex items-center justify-between">
+                <span>🥜 Simultaneous Field Use: Prevents weed growth &amp; low water</span>
+                <span className="font-bold text-orange-800">+15% Revenue</span>
+              </div>
             </div>
           </div>
         </div>
       </div>
 
-      {/* Why this plan? Card */}
+      {/* Why this same-field plan? Card */}
       <div className="bg-[#E7F7E4]/80 border border-green-200/90 rounded-3xl p-4 shadow-xs space-y-2">
         <div className="flex items-center gap-2 text-[#07552F]">
           <Sprout className="w-5 h-5" />
-          <h4 className="font-extrabold text-sm">Why this plan for {activeFarm.village}?</h4>
+          <h4 className="font-extrabold text-sm">Why same-field multi-cropping for {activeFarm.village}?</h4>
         </div>
 
         <ul className="space-y-1.5 text-xs text-[#102D20] font-semibold">
           <li className="flex items-center gap-2">
             <Check className="w-4 h-4 text-[#087A3D] stroke-[3]" />
-            <span>Matches soil pH 6.8 & clay-loam structure</span>
+            <span>Grows main crop and companion intercrop simultaneously on 1 field</span>
           </li>
           <li className="flex items-center gap-2">
             <Check className="w-4 h-4 text-[#087A3D] stroke-[3]" />
-            <span>Optimized for {activeFarm.village} local rainfall & canal water</span>
+            <span>Increases total farm income per acre by 20% to 30%</span>
           </li>
           <li className="flex items-center gap-2">
             <Check className="w-4 h-4 text-[#087A3D] stroke-[3]" />
-            <span>Based on historical yield data of {activeFarm.village} area</span>
+            <span>Reduces pest infestation through natural bio-diversity</span>
           </li>
           <li className="flex items-center gap-2">
             <Check className="w-4 h-4 text-[#087A3D] stroke-[3]" />
-            <span>Helps maintain soil nitrogen and organic matter</span>
-          </li>
-          <li className="flex items-center gap-2">
-            <Check className="w-4 h-4 text-[#087A3D] stroke-[3]" />
-            <span>Provides better year-round income across 3 seasons</span>
+            <span>Legume intercrops fix atmospheric nitrogen for the main crop</span>
           </li>
         </ul>
       </div>
