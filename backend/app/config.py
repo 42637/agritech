@@ -25,5 +25,7 @@ class Settings:
     SMTP_PASSWORD: str = os.getenv("SMTP_PASSWORD") or os.getenv("SMTP_PASS", "")
     SMTP_FROM: str = os.getenv("SMTP_FROM") or os.getenv("SMTP_USER", "")
     SMS_PROVIDER_API_KEY: str = os.getenv("SMS_PROVIDER_API_KEY", "")
+    SARVAM_API_KEY: str = os.getenv("SARVAM_API_KEY") or os.getenv("STT_PROVIDER_API_KEY", "")
+
 
 settings = Settings()

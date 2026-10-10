@@ -52,7 +52,7 @@ def test_climate_alert_uses_configured_recipients_and_reports_delivery(monkeypat
     assert sent["recipients"] == ["farmer@example.com", "family@example.com"]
     assert sent["login"] == ("sender@example.com", "test-password")
     assert isinstance(sent["message"], EmailMessage)
-    assert "&lt;unsafe&gt;" in sent["message"].get_body(subtype="html").get_content()
+    assert "&lt;unsafe&gt;" in sent["message"].get_body(preferencelist=('html',)).get_content()
 
 
 def test_climate_alert_fails_when_smtp_credentials_are_missing(monkeypatch):

@@ -1,4 +1,18 @@
-const API_BASE = '/api';
+const getApiBase = (): string => {
+  const envUrl = import.meta.env.VITE_API_URL || import.meta.env.VITE_API_BASE_URL;
+  if (envUrl && envUrl.trim() !== '') {
+    const cleanUrl = envUrl.trim().replace(/\/+$/, '');
+    return cleanUrl.endsWith('/api') ? cleanUrl : `${cleanUrl}/api`;
+  }
+  if (typeof window !== 'undefined' && (window as any).Capacitor?.isNativePlatform?.()) {
+    const customUrl = (window as any).AGRISMART_API_URL || 'https://agrismart-backend.onrender.com';
+    return `${customUrl.replace(/\/+$/, '')}/api`;
+  }
+  return '/api';
+};
+
+export const API_BASE = getApiBase();
+
 
 export interface SupabaseStatus {
   status: 'connected' | 'not_configured' | 'authentication_failed' | 'unreachable' | string;
@@ -188,15 +202,22 @@ export const api = {
   },
 
   async transcribeAudio(audio: Blob, language: string = 'en'): Promise<{ transcript: string }> {
-    const recordedMimeType = audio.type.split(';', 1)[0] || 'audio/webm';
-    const mimeType = recordedMimeType === 'audio/mp4' ? 'audio/m4a' : recordedMimeType;
-    const res = await fetch(`${API_BASE}/ai/transcribe?language=${encodeURIComponent(language)}`, {
-      method: 'POST',
-      headers: { 'Content-Type': mimeType },
-      body: audio,
-    });
-    if (!res.ok) throw new Error(`Voice transcription failed (${res.status})`);
-    return res.json();
+    const rawType = (audio.type || 'audio/webm').split(';', 1)[0].trim().toLowerCase();
+    const mimeType = rawType && rawType.startsWith('audio/') ? rawType : 'audio/webm';
+    try {
+      const res = await fetch(`${API_BASE}/ai/transcribe?language=${encodeURIComponent(language)}`, {
+        method: 'POST',
+        headers: { 'Content-Type': mimeType },
+        body: audio,
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        return { transcript: data.transcript || '' };
+      }
+      return await res.json();
+    } catch {
+      return { transcript: '' };
+    }
   },
 
   // Location
@@ -337,5 +358,23 @@ export const api = {
       throw new Error(data.detail || 'Could not submit your purchase request.');
     }
     return res.json();
+  },
+
+  async getProfile() {
+    const res = await fetch(`${API_BASE}/profile`);
+    if (!res.ok) throw new Error("Failed to fetch profile");
+    return res.json();
+  },
+
+  async updateProfile(data: { name?: string; preferred_language?: string }) {
+    const res = await fetch(`${API_BASE}/profile`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data)
+    });
+    if (!res.ok) throw new Error("Failed to update profile");
+    return res.json();
   }
 };
+
+

@@ -2,6 +2,8 @@ import React from 'react';
 import { useTranslation } from 'react-i18next';
 import { Bell, ChevronDown, Sprout } from 'lucide-react';
 
+import { api } from '../services/api';
+
 interface HeaderProps {
   onOpenNotifications?: () => void;
   unreadAlertsCount?: number;
@@ -14,11 +16,7 @@ export const Header: React.FC<HeaderProps> = ({ onOpenNotifications, unreadAlert
     const language = e.target.value;
     i18n.changeLanguage(language);
     try { localStorage.setItem('agrismart-language', language); } catch { /* storage may be unavailable */ }
-    void fetch('/api/profile', {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ preferred_language: language })
-    }).catch(() => undefined);
+    api.updateProfile({ preferred_language: language }).catch(() => undefined);
   };
 
   return (

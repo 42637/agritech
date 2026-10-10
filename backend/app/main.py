@@ -14,13 +14,24 @@ app = FastAPI(
     version="1.0.0"
 )
 
+origins = [
+    "http://localhost",
+    "http://localhost:5173",
+    "http://localhost:3000",
+    "https://localhost",
+    "capacitor://localhost",
+]
+if settings.FRONTEND_ORIGIN and settings.FRONTEND_ORIGIN != "*":
+    origins.append(settings.FRONTEND_ORIGIN)
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    allow_origins=["*"] if settings.FRONTEND_ORIGIN == "*" else origins,
+    allow_credentials=True if settings.FRONTEND_ORIGIN != "*" else False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
 
 app.include_router(auth.router)
 app.include_router(farms.router)

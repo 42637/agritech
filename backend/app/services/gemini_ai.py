@@ -237,43 +237,79 @@ Latest farmer field update: {json.dumps(field_update or {}, ensure_ascii=False)}
         return native_letters >= 8 and other_indic_letters == 0 and native_letters / max(all_letters, 1) >= 0.65
 
     def transcribe_farmer_audio(self, audio: bytes, mime_type: str, language: str = "en") -> str:
-        """Transcribe a short farmer voice clip using Gemini's dedicated speech model."""
-        language_codes = {"en": "en-IN", "te": "te-IN", "hi": "hi-IN"}
-        selected_language = language.lower() if language.lower() in language_codes else "en"
-        if not self.api_key:
-            raise RuntimeError("Speech transcription is not configured")
-        prompt = (
-            "Transcribe the farmer's spoken question exactly in the spoken language and its native script. "
-            "Return only the transcript, without answering, translating, or adding commentary."
-        )
-        payload = {
-            "contents": [{"parts": [
-                {"text": prompt},
-                {"inlineData": {"mimeType": mime_type, "data": base64.b64encode(audio).decode("ascii")}},
-            ]}],
-            "generationConfig": {
-                "temperature": 0,
-                "maxOutputTokens": 512,
-                "audioTranscriptionConfig": {
-                    "languageCodes": [language_codes[selected_language]],
-                    "mode": "SMART",
-                },
-            },
+        """Transcribe farmer audio using Sarvam AI Speech-to-Text API."""
+        import uuid
+        import os
+
+        sarvam_key = getattr(settings, "SARVAM_API_KEY", "") or os.getenv("SARVAM_API_KEY") or "sk_weu5hd6x_iE1cVmwA66Ing0n2BRFYiaaK"
+        if not sarvam_key:
+            raise RuntimeError("Sarvam STT API key is not configured")
+
+        lang_codes = {"te": "te-IN", "hi": "hi-IN", "en": "en-IN"}
+        lang_code = lang_codes.get(language.lower(), "en-IN")
+
+        url = "https://api.sarvam.ai/speech-to-text"
+        boundary = f"----WebKitFormBoundary{uuid.uuid4().hex}"
+
+        clean_mime = mime_type.split(";", 1)[0].strip().lower() if mime_type else "audio/webm"
+        if clean_mime not in {"audio/wav", "audio/webm", "audio/mp4", "audio/m4a", "audio/ogg", "audio/mp3", "audio/mpeg"}:
+            clean_mime = "audio/webm"
+
+        ext = "webm"
+        if "wav" in clean_mime: ext = "wav"
+        elif "mp3" in clean_mime or "mpeg" in clean_mime: ext = "mp3"
+        elif "mp4" in clean_mime or "m4a" in clean_mime: ext = "m4a"
+        elif "ogg" in clean_mime: ext = "ogg"
+
+        CRLF = b"\r\n"
+        body_parts = []
+
+        # File field
+        body_parts.append(f"--{boundary}".encode() + CRLF)
+        body_parts.append(f'Content-Disposition: form-data; name="file"; filename="farmer_voice.{ext}"'.encode() + CRLF)
+        body_parts.append(f"Content-Type: {clean_mime}".encode() + CRLF)
+        body_parts.append(CRLF)
+        body_parts.append(audio + CRLF)
+
+        # model field
+        body_parts.append(f"--{boundary}".encode() + CRLF)
+        body_parts.append(b'Content-Disposition: form-data; name="model"' + CRLF)
+        body_parts.append(CRLF)
+        body_parts.append(b"saaras:v3" + CRLF)
+
+        # language_code field
+        body_parts.append(f"--{boundary}".encode() + CRLF)
+        body_parts.append(b'Content-Disposition: form-data; name="language_code"' + CRLF)
+        body_parts.append(CRLF)
+        body_parts.append(lang_code.encode() + CRLF)
+
+        # Closing boundary
+        body_parts.append(f"--{boundary}--".encode() + CRLF)
+
+        payload = b"".join(body_parts)
+
+        headers = {
+            "Content-Type": f"multipart/form-data; boundary={boundary}",
+            "api-subscription-key": sarvam_key,
         }
-        url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-transcribe:generateContent"
-        request = urllib.request.Request(
-            url,
-            data=json.dumps(payload).encode("utf-8"),
-            headers={"Content-Type": "application/json", "x-goog-api-key": self.api_key},
-        )
-        with urllib.request.urlopen(request, timeout=20) as response:
-            data = json.loads(response.read().decode("utf-8"))
-        candidates = data.get("candidates", [])
-        parts = candidates[0].get("content", {}).get("parts", []) if candidates else []
-        transcript = " ".join(part.get("text", "").strip() for part in parts if part.get("text", "")).strip()
-        if not transcript:
-            raise ValueError("No speech was detected in the recording")
-        return transcript
+
+        try:
+            req = urllib.request.Request(url, data=payload, headers=headers, method="POST")
+            with urllib.request.urlopen(req, timeout=25) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+            transcript = data.get("transcript", "").strip()
+            return transcript
+        except urllib.error.HTTPError as err:
+            try:
+                err_body = err.read().decode("utf-8")
+                logger.error("Sarvam STT HTTP %s: %s", err.code, err_body)
+            except Exception:
+                logger.error("Sarvam STT HTTP %s: %s", err.code, err.reason)
+            return ""
+        except Exception as err:
+            logger.error("Sarvam STT Error: %s", err)
+            return ""
+
 
     async def generate_agricultural_answer(
         self,

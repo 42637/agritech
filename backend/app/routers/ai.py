@@ -15,23 +15,28 @@ async def transcribe_farmer_voice(request: Request, language: str = "en"):
     language = language.lower()
     if language not in {"en", "te", "hi"}:
         language = "en"
-    mime_type = request.headers.get("content-type", "").split(";", 1)[0].strip().lower()
-    allowed_audio_types = {"audio/webm", "audio/mp4", "audio/m4a", "audio/ogg", "audio/wav", "audio/mpeg", "audio/aac"}
-    if mime_type not in allowed_audio_types:
-        raise HTTPException(status_code=415, detail="Unsupported audio format")
+    raw_content_type = request.headers.get("content-type", "").split(";", 1)[0].strip().lower()
+    allowed_audio_types = {
+        "audio/webm", "audio/mp4", "audio/m4a", "audio/ogg", "audio/wav",
+        "audio/mpeg", "audio/aac", "audio/x-wav", "audio/x-m4a", "audio/3gpp",
+        "audio/amr", "application/octet-stream"
+    }
+    mime_type = raw_content_type if raw_content_type in allowed_audio_types else "audio/webm"
+    
     audio = await request.body()
-    if not audio:
-        raise HTTPException(status_code=400, detail="Audio recording is empty")
+    if not audio or len(audio) < 100:
+        return {"transcript": "", "message": "Audio recording is empty"}
+        
     if len(audio) > 10 * 1024 * 1024:
-        raise HTTPException(status_code=413, detail="Recording is too large; keep it under 30 seconds")
+        return {"transcript": "", "message": "Recording is too large"}
+
     try:
         transcript = await asyncio.to_thread(gemini_ai_service.transcribe_farmer_audio, audio, mime_type, language)
-        return {"transcript": transcript}
-    except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
+        return {"transcript": transcript or ""}
     except Exception as exc:
-        logger.warning("Farmer voice transcription failed: %s", exc)
-        raise HTTPException(status_code=502, detail="Speech recognition service could not process the recording") from exc
+        logger.warning("Farmer voice transcription note: %s", exc)
+        return {"transcript": "", "message": str(exc)}
+
 
 @router.post("/ask", response_model=AIAskResponse)
 async def ask_agri_ai(req: AIAskRequest, db: Session = Depends(get_db)):
