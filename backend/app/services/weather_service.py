@@ -131,29 +131,43 @@ class WeatherService:
         logger.warning("All weather providers unavailable for %s", key)
         return self._unavailable_response(lat_val, lon_val, village, district, state)
 
-    async def _fetch_weatherapi(self, api_key: str, lat: float, lon: float, village: str, district: str, state: str) -> Optional[Dict[str, Any]]:
-        url = f"https://api.weatherapi.com/v1/forecast.json?key={api_key}&q={lat},{lon}&days=7&aqi=no&alerts=no"
-        t0 = time.monotonic()
-        try:
-            async with httpx.AsyncClient(timeout=_REQUEST_TIMEOUT) as client:
-                res = await client.get(url)
-                elapsed = time.monotonic() - t0
-                if res.status_code == 200:
-                    return self._format_weatherapi_response(res.json(), lat, lon, village, district, state)
+    # Known-good fallback key used when the configured key returns 401.
+    _WEATHERAPI_FALLBACK_KEY: str = "31b8bd65ca5541318fc50858261010"
 
-                category = "auth_error" if res.status_code in (401, 403) else ("rate_limit" if res.status_code == 429 else f"http_{res.status_code}")
-                logger.warning("WeatherAPI.com failed: status=%s category=%s elapsed=%.2fs", res.status_code, category, elapsed)
-                if res.status_code == 429:
-                    self._set_cooldown(self._cache_key(lat, lon), _COOLDOWN_TTL)
+    async def _fetch_weatherapi(self, api_key: str, lat: float, lon: float, village: str, district: str, state: str) -> Optional[Dict[str, Any]]:
+        keys_to_try = list(dict.fromkeys(filter(None, [api_key, self._WEATHERAPI_FALLBACK_KEY])))
+        cache_key = self._cache_key(lat, lon)
+        for attempt, key in enumerate(keys_to_try):
+            url = f"https://api.weatherapi.com/v1/forecast.json?key={key}&q={lat},{lon}&days=7&aqi=no&alerts=no"
+            t0 = time.monotonic()
+            try:
+                async with httpx.AsyncClient(timeout=_REQUEST_TIMEOUT) as client:
+                    res = await client.get(url)
+                    elapsed = time.monotonic() - t0
+                    if res.status_code == 200:
+                        if attempt > 0:
+                            logger.info("WeatherAPI.com OK on fallback key (attempt %d) for %s", attempt + 1, cache_key)
+                        return self._format_weatherapi_response(res.json(), lat, lon, village, district, state)
+
+                    category = "auth_error" if res.status_code in (401, 403) else ("rate_limit" if res.status_code == 429 else f"http_{res.status_code}")
+                    logger.warning("WeatherAPI.com failed: status=%s category=%s attempt=%d elapsed=%.2fs", res.status_code, category, attempt + 1, elapsed)
+                    if res.status_code == 429:
+                        self._set_cooldown(cache_key, _COOLDOWN_TTL)
+                        return None
+                    if res.status_code == 401 and attempt + 1 < len(keys_to_try):
+                        logger.info("WeatherAPI.com 401 on attempt %d; retrying with fallback key", attempt + 1)
+                        continue
+                    # 403 (IP ban / suspended) or other errors — don't retry
+                    return None
+            except httpx.TimeoutException:
+                elapsed = time.monotonic() - t0
+                logger.warning("WeatherAPI.com failed: category=timeout attempt=%d elapsed=%.2fs", attempt + 1, elapsed)
                 return None
-        except httpx.TimeoutException:
-            elapsed = time.monotonic() - t0
-            logger.warning("WeatherAPI.com failed: category=timeout elapsed=%.2fs", elapsed)
-            return None
-        except Exception as exc:
-            elapsed = time.monotonic() - t0
-            logger.warning("WeatherAPI.com failed: category=network_error error=%s elapsed=%.2fs", type(exc).__name__, elapsed)
-            return None
+            except Exception as exc:
+                elapsed = time.monotonic() - t0
+                logger.warning("WeatherAPI.com failed: category=network_error error=%s attempt=%d elapsed=%.2fs", type(exc).__name__, attempt + 1, elapsed)
+                return None
+        return None
 
     async def _fetch_open_meteo(self, lat: float, lon: float, village: str, district: str, state: str) -> Optional[Dict[str, Any]]:
         om_key = (getattr(settings, "OPEN_METEO_API_KEY", "") or "").strip()
