@@ -10,6 +10,7 @@ class Settings:
     SUPABASE_KEY: str = os.getenv("SUPABASE_KEY", "")
     SUPABASE_SERVICE_ROLE_KEY: str = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "")
     OPEN_METEO_API_KEY: str = os.getenv("OPEN_METEO_API_KEY", "")
+    WEATHERAPI_KEY: str = os.getenv("WEATHERAPI_KEY", "")
     DATABASE_URL: str = os.getenv("DATABASE_URL", "sqlite:///./agrismart.db")
     ENVIRONMENT: str = os.getenv("ENVIRONMENT", "development")
     FRONTEND_ORIGIN: str = os.getenv("FRONTEND_ORIGIN", "http://localhost:5173")

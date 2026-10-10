@@ -14,6 +14,8 @@ services:
         sync: false
       - key: SARVAM_API_KEY
         sync: false
+      - key: WEATHERAPI_KEY
+        sync: false
       - key: DATABASE_URL
         sync: false
       - key: SUPABASE_URL

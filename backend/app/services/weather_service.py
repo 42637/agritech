@@ -10,7 +10,7 @@ from ..config import settings
 
 logger = logging.getLogger("weather_service")
 
-# WMO Weather interpretation codes
+# WMO Weather interpretation codes (for Open-Meteo fallback)
 WMO_CODES = {
     0: ("Clear Sky", "sun"),
     1: ("Mainly Clear", "sun"),
@@ -31,15 +31,15 @@ WMO_CODES = {
 }
 
 _CACHE_TTL = 900            # 15 minutes for fresh data
-_COOLDOWN_TTL = 120         # 2-minute cooldown window after a 429 (up from 60s)
-_REQUEST_TIMEOUT = 12.0     # seconds for the Open-Meteo request
+_COOLDOWN_TTL = 120         # 2-minute cooldown window after a 429
+_REQUEST_TIMEOUT = 10.0     # seconds for HTTP requests
 
 
 class WeatherService:
     def __init__(self):
         # Main data cache: cache_key -> {timestamp, data}
         self._cache: Dict[str, Dict[str, Any]] = {}
-        # 429 cooldown registry: cache_key -> (cooldown_until, jitter_seconds)
+        # 429 cooldown registry: cache_key -> timestamp_cooldown_until
         self._cooldown: Dict[str, float] = {}
         # Per-key in-flight deduplication locks
         self._locks: Dict[str, asyncio.Lock] = {}
@@ -62,7 +62,7 @@ class WeatherService:
     def _get_stale(self, key: str) -> Optional[Dict[str, Any]]:
         """Return the most recent successful data even if it has expired."""
         entry = self._cache.get(key)
-        if entry and entry["data"].get("source") in {"forecast", "stale_forecast"}:
+        if entry and entry["data"].get("source") in {"weatherapi", "forecast", "stale_forecast"}:
             return entry["data"]
         return None
 
@@ -87,14 +87,13 @@ class WeatherService:
         state: str = "Andhra Pradesh",
     ) -> Dict[str, Any]:
         """
-        Fetch live weather from Open-Meteo with:
+        Fetch live weather from WeatherAPI.com (or Open-Meteo fallback) with:
           - In-memory cache (15 min TTL)
           - In-flight deduplication (asyncio.Lock per location)
           - Stale-cache fallback on 429 / error
           - Bounded 429 cooldown (2 min + jitter)
           - Full observability logging
         """
-        # Coerce types
         try:
             lat_val = float(lat) if lat is not None else 16.5449
             lon_val = float(lon) if lon is not None else 81.5212
@@ -103,7 +102,7 @@ class WeatherService:
 
         key = self._cache_key(lat_val, lon_val)
 
-        # 1. Fast path – serve fresh cached data without acquiring the lock
+        # 1. Fast path – serve fresh cached data
         cached = self._get_cached(key)
         if cached is not None:
             logger.debug("weather cache HIT for %s", key)
@@ -111,134 +110,169 @@ class WeatherService:
 
         # 2. Acquire per-location lock to deduplicate concurrent requests
         async with self._get_lock(key):
-            # Re-check after acquiring lock (another coroutine may have populated it)
             cached = self._get_cached(key)
             if cached is not None:
                 logger.debug("weather cache HIT (post-lock) for %s", key)
                 return cached
 
-            # 3. Check if we're in a 429 cooldown window
+            # 3. Check if in cooldown
             if self._in_cooldown(key):
                 stale = self._get_stale(key)
                 if stale:
-                    logger.info(
-                        "Open-Meteo rate-limit cooldown active for %s — serving stale forecast", key
-                    )
+                    logger.info("Rate-limit cooldown active for %s — serving stale forecast", key)
                     stale_copy = dict(stale)
                     stale_copy["source"] = "stale_forecast"
-                    stale_copy["updated_at"] = (
-                        f"Cached forecast (Open-Meteo rate limited) — {stale.get('updated_at', 'unknown')}"
-                    )
+                    stale_copy["updated_at"] = f"Cached forecast — {stale.get('updated_at', 'unknown')}"
                     return stale_copy
-                else:
-                    logger.info(
-                        "Open-Meteo rate-limit cooldown active for %s — no stale data available", key
-                    )
-                    return self._fallback_weather(lat_val, lon_val, village, district, state)
+                return self._fallback_weather(lat_val, lon_val, village, district, state)
 
-            # 4. Build the upstream request URL
-            base_domain = (
-                "customer-api.open-meteo.com"
-                if settings.OPEN_METEO_API_KEY
-                else "api.open-meteo.com"
-            )
-            api_key_param = (
-                f"&apikey={settings.OPEN_METEO_API_KEY}"
-                if settings.OPEN_METEO_API_KEY
-                else ""
-            )
-            url = (
-                f"https://{base_domain}/v1/forecast?"
-                f"latitude={lat_val}&longitude={lon_val}&"
-                f"current=temperature_2m,relative_humidity_2m,apparent_temperature,"
-                f"precipitation,weather_code,wind_speed_10m&"
-                f"hourly=temperature_2m,precipitation_probability,weather_code&"
-                f"daily=weather_code,temperature_2m_max,temperature_2m_min,"
-                f"precipitation_probability_max,precipitation_sum,wind_speed_10m_max&"
-                f"timezone=auto{api_key_param}"
-            )
+            # 4. Try WeatherAPI.com if key is present
+            weatherapi_key = (settings.WEATHERAPI_KEY or "").strip()
+            if weatherapi_key:
+                logger.info("weather cache MISS for %s — fetching WeatherAPI.com", key)
+                try:
+                    w_data = await self._fetch_weatherapi(weatherapi_key, lat_val, lon_val, village, district, state)
+                    if w_data:
+                        self._set_cache(key, w_data)
+                        return w_data
+                except Exception as exc:
+                    logger.warning("WeatherAPI.com request failed for %s: %s", key, exc)
 
-            logger.info("weather cache MISS for %s — fetching Open-Meteo", key)
-
+            # 5. Fallback to Open-Meteo
+            logger.info("Fetching Open-Meteo for %s", key)
             try:
-                async with httpx.AsyncClient(timeout=_REQUEST_TIMEOUT) as client:
-                    response = await client.get(url)
-
-                if response.status_code == 200:
-                    raw = response.json()
-                    formatted = self._format_weather_response(
-                        raw, lat_val, lon_val, village, district, state
-                    )
-                    if formatted.get("source") == "forecast":
-                        self._set_cache(key, formatted)
-                        logger.info(
-                            "Open-Meteo fetch SUCCESS for %s — temp=%s°C, humidity=%s%%",
-                            key,
-                            formatted.get("current_temp"),
-                            formatted.get("humidity"),
-                        )
-                        return formatted
-                    else:
-                        logger.warning(
-                            "Open-Meteo returned 200 but data is incomplete for %s", key
-                        )
-
-                elif response.status_code == 429:
-                    retry_after = response.headers.get("Retry-After")
-                    cooldown_secs = float(retry_after) if retry_after else _COOLDOWN_TTL
-                    self._set_cooldown(key, cooldown_secs)
-                    logger.warning(
-                        "Open-Meteo returned 429 for %s — cooldown %.0fs applied",
-                        key, cooldown_secs,
-                    )
-                    stale = self._get_stale(key)
-                    if stale:
-                        stale_copy = dict(stale)
-                        stale_copy["source"] = "stale_forecast"
-                        stale_copy["updated_at"] = (
-                            f"Cached forecast (Open-Meteo rate limited) — {stale.get('updated_at', 'unknown')}"
-                        )
-                        return stale_copy
-                    return self._fallback_weather(lat_val, lon_val, village, district, state)
-
-                else:
-                    logger.warning(
-                        "Open-Meteo returned HTTP %s for %s", response.status_code, key
-                    )
-
-            except httpx.TimeoutException:
-                logger.error("Open-Meteo request timed out for %s", key)
-            except httpx.RequestError as exc:
-                logger.error("Open-Meteo network error for %s: %s", key, exc)
+                om_data = await self._fetch_open_meteo(lat_val, lon_val, village, district, state)
+                if om_data:
+                    self._set_cache(key, om_data)
+                    return om_data
             except Exception as exc:
-                logger.error("Unexpected error fetching Open-Meteo for %s: %s", key, exc)
+                logger.warning("Open-Meteo request failed for %s: %s", key, exc)
 
-        # 5. Final fallback — use stale data if any successful prior fetch exists
+        # 6. Final fallback — serve stale or explicit unavailable
         stale = self._get_stale(key)
         if stale:
             stale_copy = dict(stale)
             stale_copy["source"] = "stale_forecast"
-            stale_copy["updated_at"] = (
-                f"Last live update: {stale.get('updated_at', 'unknown')}"
-            )
+            stale_copy["updated_at"] = f"Last live update: {stale.get('updated_at', 'unknown')}"
             logger.info("Serving stale forecast for %s after error", key)
             return stale_copy
 
         logger.warning("All weather sources failed for %s — returning unavailable state", key)
         return self._fallback_weather(lat_val, lon_val, village, district, state)
 
-    # ------------------------------------------------------------------
-    # Response formatting
-    # ------------------------------------------------------------------
+    async def _fetch_weatherapi(
+        self, api_key: str, lat: float, lon: float, village: str, district: str, state: str
+    ) -> Optional[Dict[str, Any]]:
+        url = f"https://api.weatherapi.com/v1/forecast.json?key={api_key}&q={lat},{lon}&days=7&aqi=no&alerts=no"
+        async with httpx.AsyncClient(timeout=_REQUEST_TIMEOUT) as client:
+            res = await client.get(url)
+            if res.status_code == 200:
+                raw = res.json()
+                return self._format_weatherapi_response(raw, lat, lon, village, district, state)
+            elif res.status_code == 429:
+                self._set_cooldown(self._cache_key(lat, lon), _COOLDOWN_TTL)
+                logger.warning("WeatherAPI.com 429 rate limit hit for (%s, %s)", lat, lon)
+            else:
+                logger.warning("WeatherAPI.com HTTP %s for (%s, %s)", res.status_code, lat, lon)
+        return None
 
-    def _format_weather_response(
-        self,
-        data: Dict[str, Any],
-        lat: float,
-        lon: float,
-        village: str,
-        district: str,
-        state: str,
+    async def _fetch_open_meteo(
+        self, lat: float, lon: float, village: str, district: str, state: str
+    ) -> Optional[Dict[str, Any]]:
+        base_domain = "customer-api.open-meteo.com" if settings.OPEN_METEO_API_KEY else "api.open-meteo.com"
+        api_key_param = f"&apikey={settings.OPEN_METEO_API_KEY}" if settings.OPEN_METEO_API_KEY else ""
+        url = (
+            f"https://{base_domain}/v1/forecast?"
+            f"latitude={lat}&longitude={lon}&"
+            f"current=temperature_2m,relative_humidity_2m,apparent_temperature,"
+            f"precipitation,weather_code,wind_speed_10m&"
+            f"daily=weather_code,temperature_2m_max,temperature_2m_min,"
+            f"precipitation_probability_max,precipitation_sum,wind_speed_10m_max&"
+            f"timezone=auto{api_key_param}"
+        )
+        async with httpx.AsyncClient(timeout=_REQUEST_TIMEOUT) as client:
+            res = await client.get(url)
+            if res.status_code == 200:
+                raw = res.json()
+                return self._format_open_meteo_response(raw, lat, lon, village, district, state)
+            elif res.status_code == 429:
+                self._set_cooldown(self._cache_key(lat, lon), _COOLDOWN_TTL)
+                logger.warning("Open-Meteo 429 rate limit hit for (%s, %s)", lat, lon)
+            else:
+                logger.warning("Open-Meteo HTTP %s for (%s, %s)", res.status_code, lat, lon)
+        return None
+
+    def _format_weatherapi_response(
+        self, data: Dict[str, Any], lat: float, lon: float, village: str, district: str, state: str
+    ) -> Dict[str, Any]:
+        current = data.get("current", {})
+        forecast_days = data.get("forecast", {}).get("forecastday", [])
+
+        def safe_round(val, ndigits=0):
+            if isinstance(val, (int, float)) and not math.isnan(val):
+                return round(val, ndigits) if ndigits else round(val)
+            return None
+
+        temp_curr = safe_round(current.get("temp_c"))
+        feels_like = safe_round(current.get("feelslike_c"))
+        humidity = safe_round(current.get("humidity"))
+        wind_speed = safe_round(current.get("wind_kph"))
+        condition_text = current.get("condition", {}).get("text", "Partly Cloudy")
+
+        forecast: List[Dict[str, Any]] = []
+        for fday in forecast_days[:7]:
+            date_str = fday.get("date", "")
+            try:
+                dt = datetime.strptime(date_str, "%Y-%m-%d")
+            except Exception:
+                dt = datetime.now()
+            day_data = fday.get("day", {})
+            forecast.append({
+                "day": dt.strftime("%a"),
+                "date": dt.strftime("%d %b"),
+                "max_temp": safe_round(day_data.get("maxtemp_c")),
+                "min_temp": safe_round(day_data.get("mintemp_c")),
+                "rain_chance": safe_round(day_data.get("daily_chance_of_rain")),
+                "precipitation_mm": safe_round(day_data.get("totalprecip_mm"), 1),
+                "condition": day_data.get("condition", {}).get("text", "Partly Cloudy"),
+                "icon": "rain" if (day_data.get("daily_chance_of_rain") or 0) >= 30 else "sun",
+            })
+
+        rain_today = forecast[0]["rain_chance"] if forecast else None
+        max_today = forecast[0]["max_temp"] if forecast else None
+        min_today = forecast[0]["min_temp"] if forecast else None
+        rainfall_7d = round(sum(f["precipitation_mm"] for f in forecast if f["precipitation_mm"] is not None), 1) if forecast else None
+
+        now_time = datetime.now().strftime("%I:%M %p")
+        audio_summary = (
+            f"Live WeatherAPI report for {village}, {district}. "
+            f"Current temperature is {temp_curr}°C and {condition_text}. Humidity is {humidity}%."
+        )
+
+        return {
+            "village": village,
+            "district": district,
+            "state": state,
+            "lat": round(lat, 2),
+            "lon": round(lon, 2),
+            "updated_at": f"Live WeatherAPI {now_time}",
+            "source": "weatherapi",
+            "rainfall_7d_mm": rainfall_7d,
+            "current_temp": temp_curr,
+            "feels_like": feels_like,
+            "condition": condition_text,
+            "rain_chance": rain_today,
+            "max_temp": max_today,
+            "min_temp": min_today,
+            "wind_speed": wind_speed,
+            "humidity": humidity,
+            "forecast": forecast,
+            "insights": self._generate_weather_insights(forecast, True),
+            "audio_summary": audio_summary,
+        }
+
+    def _format_open_meteo_response(
+        self, data: Dict[str, Any], lat: float, lon: float, village: str, district: str, state: str
     ) -> Dict[str, Any]:
         current = data.get("current", {})
         daily = data.get("daily", {})
@@ -246,9 +280,9 @@ class WeatherService:
         wmo_code = current.get("weather_code")
         condition_text, icon_type = WMO_CODES.get(wmo_code, ("Unavailable", "sun"))
 
-        def safe_round(value, ndigits=0):
-            if isinstance(value, (int, float)) and not math.isnan(value):
-                return round(value, ndigits) if ndigits else round(value)
+        def safe_round(val, ndigits=0):
+            if isinstance(val, (int, float)) and not math.isnan(val):
+                return round(val, ndigits) if ndigits else round(val)
             return None
 
         temp_curr = safe_round(current.get("temperature_2m"))
@@ -268,7 +302,7 @@ class WeatherService:
             date_str = daily_time[i]
             try:
                 dt = datetime.strptime(date_str, "%Y-%m-%d")
-            except (ValueError, TypeError):
+            except Exception:
                 dt = datetime.now() + timedelta(days=i)
             d_code = daily_codes[i] if i < len(daily_codes) else None
             cond, icon = WMO_CODES.get(d_code, ("Unavailable", "sun"))
@@ -277,43 +311,26 @@ class WeatherService:
                 "date": dt.strftime("%d %b"),
                 "max_temp": safe_round(max_temps[i]) if i < len(max_temps) else None,
                 "min_temp": safe_round(min_temps[i]) if i < len(min_temps) else None,
-                "rain_chance": (
-                    rain_chances[i]
-                    if i < len(rain_chances) and isinstance(rain_chances[i], (int, float))
-                    else None
-                ),
-                "precipitation_mm": (
-                    safe_round(rainfall_amounts[i], 1)
-                    if i < len(rainfall_amounts) and rainfall_amounts[i] is not None
-                    else None
-                ),
+                "rain_chance": safe_round(rain_chances[i]) if i < len(rain_chances) else None,
+                "precipitation_mm": safe_round(rainfall_amounts[i], 1) if i < len(rainfall_amounts) else None,
                 "condition": cond,
                 "icon": icon,
             })
 
-        rain_today = (
-            rain_chances[0]
-            if rain_chances and isinstance(rain_chances[0], (int, float))
-            else None
-        )
+        rain_today = rain_chances[0] if rain_chances else None
         max_today = safe_round(max_temps[0]) if max_temps else None
         min_today = safe_round(min_temps[0]) if min_temps else None
-        rainfall_7d = round(
-            sum(v for v in rainfall_amounts[:7] if isinstance(v, (int, float))), 1
-        ) if rainfall_amounts else None
+        rainfall_7d = round(sum(v for v in rainfall_amounts[:7] if isinstance(v, (int, float))), 1) if rainfall_amounts else None
 
-        # Only mark as "forecast" if we have at least temperature
         weather_available = temp_curr is not None or max_today is not None
         source = "forecast" if weather_available else "unavailable"
-
         now_time = datetime.now().strftime("%I:%M %p")
+
         audio_summary = (
             f"Live Open-Meteo weather report for {village}, {district}. "
-            f"Current temperature is {temp_curr}°C and {condition_text}. "
-            f"Humidity is {humidity}%."
+            f"Current temperature is {temp_curr}°C and {condition_text}. Humidity is {humidity}%."
             if weather_available and temp_curr is not None
-            else f"Live weather values are unavailable for {village}, {district}. "
-                 f"Check the forecast again later."
+            else f"Live weather values are unavailable for {village}, {district}."
         )
 
         return {
@@ -344,35 +361,23 @@ class WeatherService:
         if not forecast or not weather_available:
             return [{
                 "title": "Weather forecast unavailable",
-                "message": (
-                    "No live forecast was received from Open-Meteo. "
-                    "Check again later before planning irrigation."
-                ),
+                "message": "No live forecast was received. Check again later before planning irrigation.",
                 "type": "info",
                 "icon": "rain",
             }]
         insights = []
-        high_rain_day = next(
-            (f for f in forecast[:3] if (f.get("rain_chance") or 0) >= 40), None
-        )
+        high_rain_day = next((f for f in forecast[:3] if (f.get("rain_chance") or 0) >= 40), None)
         if high_rain_day:
             insights.append({
                 "title": f"Rain expected on {high_rain_day['day']}",
-                "message": (
-                    f"Open-Meteo forecasts a {high_rain_day['rain_chance']}% chance of rain "
-                    f"on {high_rain_day['day']} ({high_rain_day['date']}). "
-                    f"Adjust irrigation schedule accordingly."
-                ),
+                "message": f"Forecast shows a {high_rain_day['rain_chance']}% chance of rain on {high_rain_day['day']} ({high_rain_day['date']}). Adjust irrigation accordingly.",
                 "type": "warning",
                 "icon": "rain",
             })
         else:
             insights.append({
                 "title": "Clear Weather Window",
-                "message": (
-                    "No high-rain day in the 3-day forecast. "
-                    "Check field conditions before scheduling field work."
-                ),
+                "message": "No high-rain day in the 3-day forecast. Check field conditions before scheduling field work.",
                 "type": "info",
                 "icon": "rain",
             })
@@ -380,20 +385,14 @@ class WeatherService:
         if max_t is not None and max_t >= 35:
             insights.append({
                 "title": "High Temperature Warning",
-                "message": (
-                    f"Max temperature of {max_t}°C forecast today. "
-                    f"Irrigate early morning or evening to reduce heat stress."
-                ),
+                "message": f"Max temperature of {max_t}°C forecast today. Irrigate early morning or evening to reduce heat stress.",
                 "type": "warning",
                 "icon": "sun",
             })
         else:
             insights.append({
                 "title": "Optimal Growth Conditions",
-                "message": (
-                    "Temperature levels from Open-Meteo indicate good conditions "
-                    "for crop growth today."
-                ),
+                "message": "Temperature levels indicate good conditions for crop growth today.",
                 "type": "success",
                 "icon": "sprout",
             })
@@ -402,7 +401,6 @@ class WeatherService:
     def _fallback_weather(
         self, lat: float, lon: float, village: str, district: str, state: str
     ) -> Dict[str, Any]:
-        """Return an explicit unavailable state. Never invent measurements."""
         return {
             "village": village,
             "district": district,
@@ -423,17 +421,11 @@ class WeatherService:
             "forecast": [],
             "insights": [{
                 "title": "Weather forecast unavailable",
-                "message": (
-                    "Open-Meteo could not be reached. "
-                    "Check your connection and try again."
-                ),
+                "message": "Weather provider could not be reached. Check your connection and try again.",
                 "type": "info",
                 "icon": "rain",
             }],
-            "audio_summary": (
-                f"Live weather values are unavailable for {village}, {district}. "
-                f"Check again later."
-            ),
+            "audio_summary": f"Live weather values are unavailable for {village}, {district}. Check again later.",
         }
 
 
