@@ -18,11 +18,15 @@ origins = [
     "http://localhost",
     "http://localhost:5173",
     "http://localhost:3000",
+    "http://localhost:8000",
     "https://localhost",
     "capacitor://localhost",
+    "http://127.0.0.1",
+    "http://127.0.0.1:5173",
+    "http://127.0.0.1:8000",
     "https://agrismart-3xj8.onrender.com",
 ]
-if settings.FRONTEND_ORIGIN and settings.FRONTEND_ORIGIN != "*":
+if settings.FRONTEND_ORIGIN and settings.FRONTEND_ORIGIN not in origins and settings.FRONTEND_ORIGIN != "*":
     origins.append(settings.FRONTEND_ORIGIN)
 
 app.add_middleware(
