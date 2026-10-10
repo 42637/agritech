@@ -1,23 +1,36 @@
 import { Capacitor } from '@capacitor/core';
 
 const getApiBase = (): string => {
+  // Explicit env override always wins
   const envUrl = import.meta.env.VITE_API_URL || import.meta.env.VITE_API_BASE_URL;
   if (envUrl && envUrl.trim() !== '') {
     const cleanUrl = envUrl.trim().replace(/\/+$/, '');
     return cleanUrl.endsWith('/api') ? cleanUrl : `${cleanUrl}/api`;
   }
+  // Android native APK → always use the deployed Render backend
   if (Capacitor.isNativePlatform()) {
     return 'https://agrismart-3xj8.onrender.com/api';
   }
-  if (typeof window !== 'undefined' && (
-    window.location.hostname === 'localhost' ||
-    window.location.hostname === '127.0.0.1' ||
-    window.location.protocol === 'capacitor:' ||
-    window.location.protocol === 'file:' ||
-    Boolean((window as any).Capacitor?.isNativePlatform?.())
-  )) {
+  // Capacitor-wrapped web view (file:// or capacitor:// protocol)
+  if (
+    typeof window !== 'undefined' && (
+      window.location.protocol === 'capacitor:' ||
+      window.location.protocol === 'file:' ||
+      Boolean((window as any).Capacitor?.isNativePlatform?.())
+    )
+  ) {
     return 'https://agrismart-3xj8.onrender.com/api';
   }
+  // Local development → use local backend (port 8000)
+  if (
+    typeof window !== 'undefined' && (
+      window.location.hostname === 'localhost' ||
+      window.location.hostname === '127.0.0.1'
+    )
+  ) {
+    return 'http://localhost:8000/api';
+  }
+  // Production web deployment → relative /api path
   return '/api';
 };
 

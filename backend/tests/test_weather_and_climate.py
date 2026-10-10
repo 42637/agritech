@@ -1,5 +1,5 @@
-"""
-AgriSmart AI — Comprehensive Weather & Climate Risk Tests
+﻿"""
+AgriSmart AI â€” Comprehensive Weather & Climate Risk Tests
 ==========================================================
 Covers:
   - WeatherAPI.com primary provider (success & parsing)
@@ -89,7 +89,7 @@ async def test_weatherapi_missing_key_fallback_to_open_meteo(fresh_weather_servi
         mock_get.return_value = mock_open_meteo_response
         result = await fresh_weather_service.get_farm_weather(16.54, 81.52)
 
-        assert result["source"] == "forecast"
+        assert result["source"] == "open_meteo"
         assert result["current_temp"] == 32 or result["current_temp"] == 33
         assert result["humidity"] == 65
         assert result["rain_chance"] == 20
