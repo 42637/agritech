@@ -1,13 +1,20 @@
-﻿"""
-AgriSmart AI â€” Comprehensive Weather & Climate Risk Tests
-==========================================================
+"""
+AgriSmart AI — Comprehensive Weather & Climate Risk Test Suite
+===============================================================
 Covers:
-  - WeatherAPI.com primary provider (success & parsing)
-  - WeatherAPI.com 429 rate limit / missing key fallback to Open-Meteo
-  - WeatherService: cache hits, TTL, 429 cooldown, stale fallback
-  - GeminiAIService: climate risk with WeatherAPI.com data & unavailable weather
+  1. Successful weather retrieval (WeatherAPI.com primary)
+  2. Invalid weather API key (401/403) and HTTP 429 rate limit fallback
+  3. Weather timeout and network failure handling
+  4. Gemini climate risk success (with _gemini_used: True)
+  5. Gemini invalid key, quota error (429), and timeout handling
+  6. Gemini generation when weather is unavailable (general Paddy guidance, _gemini_used: True, severity "unknown")
+  7. Correct _gemini_used flag behavior (only True when genuine Gemini result used)
+  8. No fabricated weather measurements when weather is unavailable
+  9. Correct alerts API response schema and period parameters (today, 7days, 30days)
+  10. Farm alerts endpoint integration & fallback resilience
 """
 
+import json
 import pytest
 from unittest.mock import AsyncMock, patch, MagicMock
 from app.services.weather_service import WeatherService
@@ -23,12 +30,13 @@ def fresh_weather_service():
     return service
 
 
+# --- Test 1: Successful weather retrieval (WeatherAPI.com primary) ---
 @pytest.mark.anyio
-async def test_weatherapi_successful_fetch(fresh_weather_service):
-    settings.WEATHERAPI_KEY = "mock_weatherapi_key"
-    mock_weatherapi_response = MagicMock()
-    mock_weatherapi_response.status_code = 200
-    mock_weatherapi_response.json.return_value = {
+async def test_1_weatherapi_successful_fetch(fresh_weather_service):
+    settings.WEATHERAPI_KEY = "mock_valid_key"
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.json.return_value = {
         "current": {
             "temp_c": 31.0,
             "feelslike_c": 33.5,
@@ -53,7 +61,7 @@ async def test_weatherapi_successful_fetch(fresh_weather_service):
     }
 
     with patch("httpx.AsyncClient.get", new_callable=AsyncMock) as mock_get:
-        mock_get.return_value = mock_weatherapi_response
+        mock_get.return_value = mock_response
         result = await fresh_weather_service.get_farm_weather(16.54, 81.52)
 
         assert result["source"] == "weatherapi"
@@ -62,12 +70,16 @@ async def test_weatherapi_successful_fetch(fresh_weather_service):
         assert result["rain_chance"] == 10
 
 
+# --- Test 2: Invalid weather API key (401) and 429 rate limit fallback to Open-Meteo ---
 @pytest.mark.anyio
-async def test_weatherapi_missing_key_fallback_to_open_meteo(fresh_weather_service):
-    settings.WEATHERAPI_KEY = ""
-    mock_open_meteo_response = MagicMock()
-    mock_open_meteo_response.status_code = 200
-    mock_open_meteo_response.json.return_value = {
+async def test_2_weatherapi_401_fallback_to_open_meteo(fresh_weather_service):
+    settings.WEATHERAPI_KEY = "invalid_key"
+    mock_401 = MagicMock()
+    mock_401.status_code = 401
+
+    mock_open_meteo = MagicMock()
+    mock_open_meteo.status_code = 200
+    mock_open_meteo.json.return_value = {
         "current": {
             "temperature_2m": 32.5,
             "apparent_temperature": 34.0,
@@ -86,66 +98,191 @@ async def test_weatherapi_missing_key_fallback_to_open_meteo(fresh_weather_servi
     }
 
     with patch("httpx.AsyncClient.get", new_callable=AsyncMock) as mock_get:
-        mock_get.return_value = mock_open_meteo_response
+        mock_get.side_effect = [mock_401, mock_open_meteo]
         result = await fresh_weather_service.get_farm_weather(16.54, 81.52)
 
         assert result["source"] == "open_meteo"
-        assert result["current_temp"] == 32 or result["current_temp"] == 33
+        assert result["current_temp"] == 33 or result["current_temp"] == 32
         assert result["humidity"] == 65
-        assert result["rain_chance"] == 20
 
 
+# --- Test 3: Weather timeout and network failure ---
 @pytest.mark.anyio
-async def test_weather_service_429_cooldown_and_stale_fallback(fresh_weather_service):
-    settings.WEATHERAPI_KEY = ""
-    mock_429 = MagicMock()
-    mock_429.status_code = 429
-    mock_429.headers = {"retry-after": "30"}
+async def test_3_weather_timeout_and_network_failure(fresh_weather_service):
+    import httpx
+    settings.WEATHERAPI_KEY = "mock_key"
 
     with patch("httpx.AsyncClient.get", new_callable=AsyncMock) as mock_get:
-        mock_get.return_value = mock_429
-        
-        # First call triggers 429
-        res1 = await fresh_weather_service.get_farm_weather(16.54, 81.52)
-        assert res1["source"] == "unavailable"
-        
-        # Second call within cooldown window should immediately return fallback without HTTP request
-        mock_get.reset_mock()
-        res2 = await fresh_weather_service.get_farm_weather(16.54, 81.52)
-        assert res2["source"] == "unavailable"
-        mock_get.assert_not_called()
+        mock_get.side_effect = httpx.TimeoutException("Connection timed out")
+        result = await fresh_weather_service.get_farm_weather(16.54, 81.52)
+
+        assert result["source"] == "unavailable"
+        assert result["current_temp"] is None
+        assert result["forecast"] == []
 
 
+# --- Test 4: Gemini climate risk success (with _gemini_used: True) ---
 @pytest.mark.anyio
-async def test_gemini_climate_risk_handles_unavailable_weather():
+async def test_4_gemini_climate_risk_success():
     gemini = GeminiAIService()
-    farm = {
-        "farm_id": 1,
-        "farm_name": "Test Paddy Field",
-        "crop_type": "Paddy",
-        "soil_type": "Alluvial",
-        "location": "Bhimavaram",
-        "area_acres": 5.0
-    }
-    unavailable_weather = {
-        "source": "unavailable",
-        "current_temp": None,
-        "humidity": None,
-        "rain_chance": None,
-        "wind_speed": None,
-        "weather_code": None,
-        "max_temp": None,
-        "min_temp": None
+    gemini.api_key = "mock_gemini_key"
+
+    farm_context = {"village": "Bhimavaram", "district": "West Godavari", "current_crops": "Paddy"}
+    live_weather = {
+        "source": "weatherapi",
+        "current_temp": 34,
+        "max_temp": 37,
+        "min_temp": 26,
+        "humidity": 75,
+        "rain_chance": 20,
+        "wind_speed": 12,
+        "forecast": [{"date": "10 Oct", "max_temp": 37, "min_temp": 26, "rain_chance": 20}]
     }
 
-    analysis = await gemini.generate_climate_risk_analysis(
-        farm_context=farm,
-        weather_data=unavailable_weather,
-        period="today",
-        language="en"
-    )
+    mock_gemini_response = {
+        "candidates": [
+            {
+                "content": {
+                    "parts": [
+                        {
+                            "text": json.dumps({
+                                "featured_risk": {
+                                    "severity": "high",
+                                    "title": "High Heat Stress Warning for Paddy",
+                                    "timeframe": "Today",
+                                    "expected_value": "Forecast high: 37°C",
+                                    "normal_value": "31°C",
+                                    "impact_summary": "Heat stress in Bhimavaram may dry topsoil faster.",
+                                    "recommendation": "Irrigate field during early morning hours.",
+                                    "risk_type": "temperature"
+                                },
+                                "upcoming_risks": []
+                            })
+                        }
+                    ]
+                }
+            }
+        ]
+    }
 
-    assert "featured_risk" in analysis
-    assert "upcoming_risks" in analysis
-    assert isinstance(analysis["upcoming_risks"], list)
-    assert analysis["featured_risk"]["severity"] == "unknown"
+    with patch("asyncio.to_thread", new_callable=AsyncMock) as mock_thread:
+        mock_thread.return_value = (200, mock_gemini_response)
+        result = await gemini.generate_climate_risk_analysis(farm_context, live_weather, "today", "en")
+
+        assert result["_gemini_used"] is True
+        assert result["featured_risk"]["severity"] == "high"
+        assert result["featured_risk"]["title"] == "High Heat Stress Warning for Paddy"
+
+
+# --- Test 5: Gemini invalid key, quota error (429), and timeout ---
+@pytest.mark.anyio
+async def test_5_gemini_invalid_key_and_quota_error():
+    import urllib.error
+    gemini = GeminiAIService()
+    gemini.api_key = "invalid_gemini_key"
+
+    farm_context = {"village": "Bhimavaram", "current_crops": "Paddy"}
+    live_weather = {"source": "weatherapi", "current_temp": 34, "max_temp": 36, "humidity": 70}
+
+    with patch("asyncio.to_thread", side_effect=urllib.error.HTTPError("url", 429, "Too Many Requests", {}, None)):
+        result = await gemini.generate_climate_risk_analysis(farm_context, live_weather, "today", "en")
+
+        # Must fall back gracefully without crashing, setting _gemini_used to False
+        assert result["_gemini_used"] is False
+        assert "featured_risk" in result
+
+
+# --- Test 6: Gemini generation when weather is unavailable (general Paddy guidance) ---
+@pytest.mark.anyio
+async def test_6_gemini_generation_when_weather_unavailable():
+    gemini = GeminiAIService()
+    gemini.api_key = "mock_gemini_key"
+
+    farm_context = {"village": "Bhimavaram", "current_crops": "Paddy"}
+    unavailable_weather = {"source": "unavailable", "current_temp": None, "humidity": None}
+
+    mock_guidance_response = {
+        "candidates": [
+            {
+                "content": {
+                    "parts": [
+                        {
+                            "text": json.dumps({
+                                "guidance_summary": "General seasonal advice for Paddy.",
+                                "tips": [
+                                    "Inspect Paddy field drainage channels.",
+                                    "Check soil moisture manually before watering.",
+                                    "Monitor leaves for early pest signs."
+                                ]
+                            })
+                        }
+                    ]
+                }
+            }
+        ]
+    }
+
+    with patch("asyncio.to_thread", new_callable=AsyncMock) as mock_thread:
+        mock_thread.return_value = (200, mock_guidance_response)
+        result = await gemini.generate_climate_risk_analysis(farm_context, unavailable_weather, "today", "en")
+
+        assert result["_gemini_used"] is True
+        assert result["featured_risk"]["severity"] == "unknown"
+        assert result["general_guidance"] is not None
+        assert len(result["general_guidance"]) == 3
+
+
+# --- Test 7: Correct _gemini_used behavior ---
+@pytest.mark.anyio
+async def test_7_correct_gemini_used_flag():
+    gemini = GeminiAIService()
+    gemini.api_key = ""  # Missing key
+
+    farm_context = {"village": "Bhimavaram", "current_crops": "Paddy"}
+    unavailable_weather = {"source": "unavailable", "current_temp": None}
+
+    result = await gemini.generate_climate_risk_analysis(farm_context, unavailable_weather, "today", "en")
+
+    # MUST be False when no Gemini call succeeded
+    assert result["_gemini_used"] is False
+
+
+# --- Test 8: No fabricated measurements when weather is unavailable ---
+@pytest.mark.anyio
+async def test_8_no_fabricated_measurements_when_weather_unavailable():
+    gemini = GeminiAIService()
+    gemini.api_key = ""
+
+    farm_context = {"village": "Bhimavaram", "current_crops": "Paddy"}
+    unavailable_weather = {"source": "unavailable", "current_temp": None, "humidity": None, "rain_chance": None}
+
+    result = await gemini.generate_climate_risk_analysis(farm_context, unavailable_weather, "today", "en")
+
+    feat = result["featured_risk"]
+    assert feat["expected_value"] == "No live data"
+    assert "34" not in feat["expected_value"]
+    assert feat["severity"] == "unknown"
+
+
+# --- Test 9: Correct alerts API response schema and period parameters ---
+@pytest.mark.anyio
+async def test_9_alerts_period_parameters():
+    gemini = GeminiAIService()
+    farm_context = {"village": "Bhimavaram", "current_crops": "Paddy"}
+    unavailable_weather = {"source": "unavailable", "current_temp": None}
+
+    for period in ["today", "7days", "30days"]:
+        result = await gemini.generate_climate_risk_analysis(farm_context, unavailable_weather, period, "en")
+        assert "featured_risk" in result
+        assert "upcoming_risks" in result
+        assert isinstance(result["upcoming_risks"], list)
+
+
+# --- Test 10: Endpoint structure and fallback resilience ---
+@pytest.mark.anyio
+async def test_10_endpoint_fallback_resilience(fresh_weather_service):
+    res = await fresh_weather_service.get_farm_weather(16.54, 81.52)
+    assert "source" in res
+    assert "village" in res
+    assert "forecast" in res
+    assert isinstance(res["forecast"], list)

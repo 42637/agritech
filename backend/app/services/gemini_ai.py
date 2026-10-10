@@ -5,6 +5,7 @@ import urllib.request
 import re
 import unicodedata
 import asyncio
+import time
 import urllib.error
 from datetime import date
 from typing import Dict, Any, Optional, Tuple
@@ -541,29 +542,31 @@ Write every JSON string value in {language_name}, using its native script. Keep 
         language: str = "en",
     ) -> Dict[str, Any]:
         """
-        Generate dynamic AI climate risk analysis via Gemini.
+        Generate dynamic climate risk analysis via Google Gemini API.
 
-        When weather is unavailable the fallback avoids fabricating any measurements
-        and explicitly marks risk as unknown rather than 'low'.
+        - If live weather is available: generates crop-specific climate-risk insights using actual weather and farm details.
+        - If live weather is unavailable: Gemini generates general seasonal Paddy guidance without inventing weather measurements.
+        - Sets _gemini_used=True ONLY when a genuine Gemini API response was successfully received and used.
+        - Sets risk severity to "unknown" (not "low") when weather evidence is missing.
         """
         api_key = (self.api_key or "").strip()
         village = farm_context.get('village', 'Bhimavaram')
         crop = farm_context.get('current_crops', 'Paddy')
         language_name = {"en": "English", "hi": "Hindi", "te": "Telugu"}.get(language, "English")
         weather_source = weather_data.get("source", "unavailable")
-        weather_live = weather_source in {"weatherapi", "forecast", "stale_forecast"}
+        weather_live = weather_source in {"weatherapi", "open_meteo", "stale_forecast", "stale"}
+
+        candidate_models = list(dict.fromkeys([settings.GEMINI_MODEL, "gemini-3.5-flash-lite", "gemini-1.5-flash", "gemini-2.0-flash"]))
 
         logger.info(
-            "generate_climate_risk_analysis: model=%s key_present=%s weather_source=%s period=%s",
-            settings.GEMINI_MODEL,
+            "generate_climate_risk_analysis: key_present=%s weather_source=%s period=%s models=%s",
             bool(api_key),
             weather_source,
             period,
+            candidate_models,
         )
 
-        # --- Safely extract weather values (may all be None when source=unavailable) ---
-        def _fmt(value, suffix="", fallback="not available"):
-            """Format a weather value for the prompt. Never embeds Python None."""
+        def _fmt(value, suffix="", fallback="No live data"):
             if value is None:
                 return fallback
             return f"{value}{suffix}"
@@ -597,7 +600,7 @@ Write every JSON string value in {language_name}, using its native script. Keep 
             "te": {"today": "ఈరోజు", "7days": "తదుపరి 7 రోజులు", "30days": "తదుపరి 7 రోజులు; 30 రోజుల అంచనా అందుబాటులో లేదు"},
         }.get(language, {}).get(period, period)
 
-        # --- Only attempt Gemini when the API key is configured ---
+        # --- Case A: Live weather is available -> Call Gemini for climate risk ---
         if api_key and weather_live:
             prompt = f"""
 You are AgriSmart AI climate risk analyzer. Analyze the following farm and weather data to generate a dynamic climate risk analysis tailored specifically to {crop} farming in {village}.
@@ -641,70 +644,134 @@ Return STRICT JSON matching this schema (no markdown, no backticks):
   }},
   "upcoming_risks": [
     {{"severity": "medium", "title": "Precipitation Risk", "timeframe": "Today", "detail": "{_fmt(rain_probability, '% chance')}", "description": "Rain is possible. Check local conditions and field drainage.", "risk_type": "rain"}},
-    {{"severity": "low", "title": "Soil Evaporation", "timeframe": "Next 7 days", "detail": "Include only if forecast data supports it", "description": "Do not include if no supporting data.", "risk_type": "sun"}},
+    {{"severity": "low", "title": "Soil Evaporation", "timeframe": "Next 7 days", "detail": "Evaporation warning", "description": "Monitor topsoil moisture.", "risk_type": "sun"}},
     {{"severity": "low", "title": "Wind Activity", "timeframe": "Today", "detail": "{_fmt(wind, ' km/h')}", "description": "Check field conditions.", "risk_type": "wind"}},
-    {{"severity": "low", "title": "Pest & Fungal Risk", "timeframe": "Ongoing", "detail": "Include only if humidity data supports it", "description": "Do not claim pest risk from humidity alone.", "risk_type": "bug"}}
+    {{"severity": "low", "title": "Pest & Fungal Risk", "timeframe": "Ongoing", "detail": "{_fmt(humidity, '% humidity')}", "description": "Inspect crop regularly for pests.", "risk_type": "bug"}}
   ]
 }}
 
 Severity must be one of: high, medium, low.
 Risk_type must be one of: temperature, rain, sun, wind, bug.
 """
-
-            def _send_request(model: str):
-                url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+            def _send_request(model_name: str):
+                url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent"
                 payload = {"contents": [{"parts": [{"text": prompt}]}]}
                 req = urllib.request.Request(
                     url,
                     data=json.dumps(payload).encode('utf-8'),
                     headers={'Content-Type': 'application/json', 'x-goog-api-key': api_key},
                 )
-                with urllib.request.urlopen(req, timeout=15) as res:
+                with urllib.request.urlopen(req, timeout=12) as res:
                     return res.status, json.loads(res.read().decode('utf-8'))
 
-            for model in [settings.GEMINI_MODEL, self.primary_model, "gemini-3.5-flash-lite"]:
+            for model in candidate_models:
                 try:
-                    t0 = __import__('time').monotonic()
+                    t0 = time.monotonic()
                     status, data = await asyncio.to_thread(_send_request, model)
-                    elapsed = __import__('time').monotonic() - t0
-                    logger.info("Gemini climate risk: model=%s status=%s elapsed=%.2fs", model, status, elapsed)
+                    elapsed = time.monotonic() - t0
                     if status == 200:
                         parts = data.get("candidates", [{}])[0].get("content", {}).get("parts", [])
                         txt = next((p.get("text", "") for p in parts if p.get("text")), "").strip()
-                        # Strip markdown fences if present
                         if txt.startswith("```"):
                             txt = re.sub(r'^```[^\n]*\n?', '', txt).rstrip('`').strip()
                         parsed = json.loads(txt)
                         if "featured_risk" in parsed and "upcoming_risks" in parsed:
-                            logger.info("Gemini climate risk SUCCESS with model=%s", model)
+                            logger.info("Gemini climate risk SUCCESS model=%s elapsed=%.2fs", model, elapsed)
+                            parsed["_gemini_used"] = True
+                            parsed["_gemini_model"] = model
+                            parsed["_gemini_status"] = "success"
+                            parsed["_weather_source"] = weather_source
+                            parsed["general_guidance"] = None
                             return parsed
-                        logger.warning("Gemini climate risk: response missing required keys (model=%s)", model)
                 except urllib.error.HTTPError as exc:
-                    try:
-                        err_body = json.loads(exc.read().decode())
-                    except Exception:
-                        err_body = {}
-                    logger.warning(
-                        "Gemini HTTP %s for model=%s: %s",
-                        exc.code, model,
-                        err_body.get("error", {}).get("message", ""),
-                    )
+                    category = "auth_error" if exc.code in {401, 403} else ("quota_exceeded" if exc.code == 429 else f"http_{exc.code}")
+                    logger.warning("Gemini climate risk HTTP %s category=%s model=%s", exc.code, category, model)
                     if exc.code in {401, 403}:
-                        break  # Key invalid — don't retry other models
+                        break
                 except Exception as exc:
-                    logger.warning("Gemini climate risk error with model=%s: %s", model, exc)
+                    logger.warning("Gemini climate risk error model=%s: %s", model, type(exc).__name__)
 
-        elif api_key and not weather_live:
-            logger.info(
-                "Skipping Gemini climate risk: weather source is '%s' — no live data to analyse",
-                weather_source,
-            )
+        # --- Case B: Live weather unavailable -> Request general Paddy guidance from Gemini ---
+        if api_key and not weather_live:
+            guidance_prompt = f"""
+You are AgriSmart AI agricultural expert. Live weather data is currently unavailable for {village}, {farm_context.get('district', 'West Godavari')}.
+Do NOT invent weather conditions, temperatures, or rain forecasts.
+Provide 3 practical, seasonal general crop management practices for {crop} (Paddy) in {village}.
+Write in {language_name} using simple farmer-friendly language.
 
-        elif not api_key:
-            logger.warning("Gemini climate risk: GEMINI_API_KEY is not configured")
+Return STRICT JSON only:
+{{
+  "guidance_summary": "General agricultural guidance for {crop} when live weather is unavailable.",
+  "tips": [
+    "Tip 1: Check field bunds and drainage channels before expected seasonal rains.",
+    "Tip 2: Monitor root zone moisture manually before irrigating.",
+    "Tip 3: Inspect {crop} leaves regularly for early signs of pests."
+  ]
+}}
+"""
+            def _send_guidance(model_name: str):
+                url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent"
+                payload = {"contents": [{"parts": [{"text": guidance_prompt}]}]}
+                req = urllib.request.Request(
+                    url,
+                    data=json.dumps(payload).encode('utf-8'),
+                    headers={'Content-Type': 'application/json', 'x-goog-api-key': api_key},
+                )
+                with urllib.request.urlopen(req, timeout=12) as res:
+                    return res.status, json.loads(res.read().decode('utf-8'))
 
-        # --- Fallback: generate structured response from actual weather values ---
-        # When weather is unavailable: return explicit unknown risk, not fabricated low-risk.
+            for model in candidate_models:
+                try:
+                    t0 = time.monotonic()
+                    status, data = await asyncio.to_thread(_send_guidance, model)
+                    elapsed = time.monotonic() - t0
+                    if status == 200:
+                        parts = data.get("candidates", [{}])[0].get("content", {}).get("parts", [])
+                        txt = next((p.get("text", "") for p in parts if p.get("text")), "").strip()
+                        if txt.startswith("```"):
+                            txt = re.sub(r'^```[^\n]*\n?', '', txt).rstrip('`').strip()
+                        parsed_g = json.loads(txt)
+                        tips = parsed_g.get("tips", [])
+                        logger.info("Gemini general guidance SUCCESS model=%s elapsed=%.2fs", model, elapsed)
+                        return {
+                            "featured_risk": {
+                                "severity": "unknown",
+                                "title": f"Weather data unavailable for {crop} in {village}",
+                                "timeframe": period_label,
+                                "expected_value": "No live data",
+                                "normal_value": "",
+                                "impact_summary": f"Live weather data could not be retrieved. General seasonal guidance for {crop} is provided below.",
+                                "recommendation": "Check soil moisture and local weather conditions manually before field operations.",
+                                "risk_type": "temperature",
+                            },
+                            "upcoming_risks": [
+                                {
+                                    "severity": "unknown",
+                                    "title": "Rainfall risk unknown",
+                                    "timeframe": period_label,
+                                    "detail": "No live data",
+                                    "description": "Rain forecast unavailable. Monitor field conditions locally.",
+                                    "risk_type": "rain",
+                                },
+                                {
+                                    "severity": "unknown",
+                                    "title": "Temperature risk unknown",
+                                    "timeframe": period_label,
+                                    "detail": "No live data",
+                                    "description": "Temperature data unavailable.",
+                                    "risk_type": "sun",
+                                },
+                            ],
+                            "general_guidance": tips if tips else parsed_g.get("guidance_summary", ""),
+                            "_gemini_used": True,
+                            "_gemini_model": model,
+                            "_gemini_status": "success_general_guidance",
+                            "_weather_source": weather_source,
+                        }
+                except Exception as exc:
+                    logger.warning("Gemini general guidance error model=%s: %s", model, type(exc).__name__)
+
+        # --- Fallback: Weather unavailable AND Gemini failed / not configured ---
         if not weather_live:
             return {
                 "featured_risk": {
@@ -713,14 +780,8 @@ Risk_type must be one of: temperature, rain, sun, wind, bug.
                     "timeframe": period_label,
                     "expected_value": "No live data",
                     "normal_value": "",
-                    "impact_summary": (
-                        f"Live weather data could not be retrieved for {village}. "
-                        f"Risk assessment for {crop} cannot be completed without measurements."
-                    ),
-                    "recommendation": (
-                        "Check your internet connection and refresh the page. "
-                        "When weather data is available, a full risk assessment will be generated."
-                    ),
+                    "impact_summary": f"Live weather data could not be retrieved for {village}. Risk assessment cannot be completed without measurements.",
+                    "recommendation": "Check your internet connection and refresh. Monitor field conditions locally.",
                     "risk_type": "temperature",
                 },
                 "upcoming_risks": [
@@ -729,7 +790,7 @@ Risk_type must be one of: temperature, rain, sun, wind, bug.
                         "title": "Rainfall risk unknown",
                         "timeframe": period_label,
                         "detail": "No live data",
-                        "description": "Rain data is unavailable. Check conditions locally before field work.",
+                        "description": "Rain forecast unavailable.",
                         "risk_type": "rain",
                     },
                     {
@@ -737,22 +798,25 @@ Risk_type must be one of: temperature, rain, sun, wind, bug.
                         "title": "Temperature risk unknown",
                         "timeframe": period_label,
                         "detail": "No live data",
-                        "description": "Temperature data is unavailable. Monitor crop and soil conditions manually.",
+                        "description": "Temperature data unavailable.",
                         "risk_type": "sun",
                     },
                 ],
+                "general_guidance": None,
                 "_weather_source": weather_source,
                 "_gemini_used": False,
+                "_gemini_model": None,
+                "_gemini_status": "fallback_weather_unavailable",
             }
 
-        # Weather IS available but Gemini failed — produce a safe rule-based summary
+        # --- Fallback: Weather IS available BUT Gemini failed -> Rule-based climate risk summary ---
         simple_fallback = {
             "en": {
                 "heat_title": "Hot weather warning for {crop}",
                 "heat_impact": "Hot weather may dry the soil faster and stress the crop.",
                 "heat_action": "Check soil moisture. If dry, irrigate early morning or evening.",
                 "rain_title": "Rain forecast for {village}",
-                "rain_impact": "Rain chance today is {probability}%. If rain is likely, ensure field drains are clear.",
+                "rain_impact": "Rain chance today is {probability}%. Ensure field drains are clear.",
                 "dry_title": "Soil may dry faster",
                 "dry_impact": "Warm weather can dry topsoil. Check moisture before watering.",
                 "forecast_high": "Forecast high: {value}°C",
@@ -766,48 +830,8 @@ Risk_type must be one of: temperature, rain, sun, wind, bug.
                 "ongoing": "Ongoing",
                 "humidity_detail": "Humidity {humidity}%",
                 "pest_impact": "Check {crop} regularly for visible pest activity.",
-            },
-            "hi": {
-                "heat_title": "{crop} के लिए गर्मी की चेतावनी",
-                "heat_impact": "गर्मी से मिट्टी जल्दी सूख सकती है और फसल पर असर पड़ सकता है।",
-                "heat_action": "मिट्टी की नमी देखें। सूखी हो तो सुबह जल्दी या शाम को पानी दें।",
-                "rain_title": "{village} में बारिश का अनुमान",
-                "rain_impact": "आज बारिश की संभावना {probability}% है। बारिश होने पर खेत से पानी निकलने का रास्ता देखें।",
-                "dry_title": "मिट्टी जल्दी सूख सकती है",
-                "dry_impact": "धूप और गर्मी से ऊपर की मिट्टी सूख सकती है। पानी देने से पहले नमी देखें।",
-                "forecast_high": "अधिकतम तापमान: {value}°C",
-                "dry_timeframe": "अगले 7 दिन",
-                "moisture_unavailable": "मिट्टी की नमी का माप उपलब्ध नहीं है",
-                "wind_title": "मौसमी हवा की जानकारी",
-                "wind_timeframe": "अगले 3 दिन",
-                "wind_detail": "हवा की गति: {wind} किमी/घंटा",
-                "wind_impact": "{village} में मध्यम हवा। ज़रूरत पड़ने पर फसल को सहारा दें।",
-                "pest_title": "फसल की नियमित जाँच",
-                "ongoing": "जारी",
-                "humidity_detail": "नमी {humidity}%",
-                "pest_impact": "{crop} में कीटों के लिए नियमित जाँच करें।",
-            },
-            "te": {
-                "heat_title": "{crop} పంటకు వేడి హెచ్చరిక",
-                "heat_impact": "వేడి వల్ల నేల త్వరగా ఎండిపోవచ్చు; పంటపై ప్రభావం ఉండవచ్చు.",
-                "heat_action": "నేల తేమను చూడండి. ఎండిపోయి ఉంటే ఉదయం లేదా సాయంత్రం నీరు పెట్టండి.",
-                "rain_title": "{village}లో వర్ష సూచన",
-                "rain_impact": "ఈ రోజు వర్షం అవకాశం {probability}%. వస్తే పొలంలో నీరు బయటకు వెళ్లే మార్గాన్ని చూడండి.",
-                "dry_title": "నేల త్వరగా ఎండిపోవచ్చు",
-                "dry_impact": "ఎండ వల్ల పై మట్టి ఎండిపోవచ్చు. నీరు పెట్టే ముందు నేల తేమ చూడండి.",
-                "forecast_high": "గరిష్ఠ ఉష్ణోగ్రత: {value}°C",
-                "dry_timeframe": "తదుపరి 7 రోజులు",
-                "moisture_unavailable": "నేల తేమ కొలత అందుబాటులో లేదు",
-                "wind_title": "కాలానుగుణ గాలుల సమాచారం",
-                "wind_timeframe": "తదుపరి 3 రోజులు",
-                "wind_detail": "గాలి వేగం: {wind} కి.మీ/గం",
-                "wind_impact": "{village}లో మోస్తరు గాలులు. అవసరమైతే నిలువు పంటలకు ఆధారం ఇవ్వండి.",
-                "pest_title": "పంటను క్రమం తప్పకుండా పరిశీలించండి",
-                "ongoing": "కొనసాగుతోంది",
-                "humidity_detail": "గాలిలో తేమ {humidity}%",
-                "pest_impact": "{crop} పంటలో చీడపీడల కోసం క్రమం తప్పకుండా పరిశీలించండి.",
-            },
-        }.get(language) or {
+            }
+        }.get(language, {
             "heat_title": "Hot weather warning for {crop}",
             "heat_impact": "Hot weather may dry the soil faster and stress the crop.",
             "heat_action": "Check soil moisture. If dry, irrigate early morning or evening.",
@@ -826,7 +850,7 @@ Risk_type must be one of: temperature, rain, sun, wind, bug.
             "ongoing": "Ongoing",
             "humidity_detail": "Humidity {humidity}%",
             "pest_impact": "Check {crop} regularly.",
-        }
+        })
 
         fh_label = _fmt(forecast_high, '°C')
         is_high_temp = forecast_high is not None and float(forecast_high) >= 33
@@ -879,8 +903,11 @@ Risk_type must be one of: temperature, rain, sun, wind, bug.
                     "risk_type": "bug",
                 },
             ],
+            "general_guidance": None,
             "_weather_source": weather_source,
             "_gemini_used": False,
+            "_gemini_model": None,
+            "_gemini_status": "fallback_rule_based",
         }
 
         prompt = f"""

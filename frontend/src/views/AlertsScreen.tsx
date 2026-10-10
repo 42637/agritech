@@ -308,6 +308,35 @@ export const AlertsScreen: React.FC<AlertsScreenProps> = ({
           </div>
           )}
 
+          {/* General AI Crop Advice Section (when Gemini returns guidance without weather or alongside risks) */}
+          {alertsData?.analysis?.general_guidance && (
+            <div className="bg-emerald-50/90 border border-emerald-200/90 rounded-3xl p-4 space-y-2 shadow-2xs">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Sparkles className="w-5 h-5 text-emerald-600 animate-pulse" />
+                  <h3 className="font-extrabold text-sm text-[#102D20]">General AI Crop Guidance (Paddy)</h3>
+                </div>
+                <span className="text-[10px] font-bold bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-full">
+                  Gemini AI
+                </span>
+              </div>
+              <div className="text-xs text-[#102D20] font-medium leading-relaxed space-y-1.5 pt-1">
+                {Array.isArray(alertsData.analysis.general_guidance) ? (
+                  <ul className="space-y-1.5">
+                    {alertsData.analysis.general_guidance.map((tip: string, idx: number) => (
+                      <li key={idx} className="flex items-start gap-2">
+                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-600 mt-1.5 shrink-0" />
+                        <span>{tip}</span>
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p>{String(alertsData.analysis.general_guidance)}</p>
+                )}
+              </div>
+            </div>
+          )}
+
           {/* Section Header */}
           <div className="flex items-center justify-between pt-1">
             <h3 className="font-extrabold text-sm text-[#102D20]">{t('upcomingRisks')}</h3>

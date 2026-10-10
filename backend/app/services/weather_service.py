@@ -1,4 +1,4 @@
-﻿import asyncio
+import asyncio
 import httpx
 import logging
 import math
@@ -20,8 +20,8 @@ WMO_CODES = {
 }
 
 _CACHE_TTL = 1800
-_COOLDOWN_TTL = 180
-_REQUEST_TIMEOUT = 15.0
+_COOLDOWN_TTL = 60.0
+_REQUEST_TIMEOUT = 12.0
 
 
 class WeatherService:
@@ -46,7 +46,7 @@ class WeatherService:
 
     def _get_stale(self, key: str) -> Optional[Dict[str, Any]]:
         entry = self._cache.get(key)
-        if entry and entry["data"].get("source") in {"weatherapi", "open_meteo", "stale"}:
+        if entry and entry["data"].get("source") in {"weatherapi", "open_meteo", "stale_forecast", "stale"}:
             return entry["data"]
         return None
 
@@ -57,7 +57,7 @@ class WeatherService:
         return time.monotonic() < self._cooldown.get(key, 0)
 
     def _set_cooldown(self, key: str, seconds: float) -> None:
-        jitter = seconds * 0.2 * (random.random() * 2 - 1)
+        jitter = seconds * 0.1 * (random.random() * 2 - 1)
         self._cooldown[key] = time.monotonic() + seconds + jitter
 
     @staticmethod
@@ -100,66 +100,65 @@ class WeatherService:
                 stale = self._get_stale(key)
                 if stale:
                     result = dict(stale)
-                    result["source"] = "stale"
+                    result["source"] = "stale_forecast"
                     result["updated_at"] = f"Cached data from {stale.get('updated_at', 'earlier')}"
                     return result
                 return self._unavailable_response(lat_val, lon_val, village, district, state)
 
             weatherapi_key = (getattr(settings, "WEATHERAPI_KEY", "") or "").strip()
-            if weatherapi_key and len(weatherapi_key) > 10:
-                logger.info("Trying WeatherAPI.com for %s", key)
-                try:
-                    data = await self._fetch_weatherapi(weatherapi_key, lat_val, lon_val, village, district, state)
-                    if data:
-                        self._set_cache(key, data)
-                        logger.info("WeatherAPI.com OK temp=%s for %s", data.get("current_temp"), key)
-                        return data
-                except Exception as exc:
-                    logger.warning("WeatherAPI.com error: %s", exc)
-
-            logger.info("Trying Open-Meteo for %s", key)
-            try:
-                data = await self._fetch_open_meteo(lat_val, lon_val, village, district, state)
-                if data and data.get("source") != "unavailable":
+            if weatherapi_key and len(weatherapi_key) > 5:
+                logger.info("Requesting WeatherAPI.com forecast for (%s,%s)", lat_val, lon_val)
+                data = await self._fetch_weatherapi(weatherapi_key, lat_val, lon_val, village, district, state)
+                if data:
                     self._set_cache(key, data)
-                    logger.info("Open-Meteo OK temp=%s for %s", data.get("current_temp"), key)
+                    logger.info("WeatherAPI.com OK current_temp=%s for %s", data.get("current_temp"), key)
                     return data
-            except Exception as exc:
-                logger.warning("Open-Meteo error: %s", exc)
+
+            logger.info("Requesting Open-Meteo fallback forecast for (%s,%s)", lat_val, lon_val)
+            data = await self._fetch_open_meteo(lat_val, lon_val, village, district, state)
+            if data and data.get("source") != "unavailable":
+                self._set_cache(key, data)
+                logger.info("Open-Meteo OK current_temp=%s for %s", data.get("current_temp"), key)
+                return data
 
         stale = self._get_stale(key)
         if stale:
             result = dict(stale)
-            result["source"] = "stale"
+            result["source"] = "stale_forecast"
             result["updated_at"] = f"Last live data: {stale.get('updated_at', 'earlier')}"
             return result
 
-        logger.error("All weather sources failed for %s", key)
+        logger.warning("All weather providers unavailable for %s", key)
         return self._unavailable_response(lat_val, lon_val, village, district, state)
 
-    async def _fetch_weatherapi(self, api_key, lat, lon, village, district, state):
+    async def _fetch_weatherapi(self, api_key: str, lat: float, lon: float, village: str, district: str, state: str) -> Optional[Dict[str, Any]]:
         url = f"https://api.weatherapi.com/v1/forecast.json?key={api_key}&q={lat},{lon}&days=7&aqi=no&alerts=no"
-        async with httpx.AsyncClient(timeout=_REQUEST_TIMEOUT) as client:
-            res = await client.get(url)
-            if res.status_code == 200:
-                return self._format_weatherapi_response(res.json(), lat, lon, village, district, state)
-            elif res.status_code in (401, 403):
-                logger.error("WeatherAPI.com auth error %s", res.status_code)
-            elif res.status_code == 429:
-                self._set_cooldown(self._cache_key(lat, lon), _COOLDOWN_TTL)
-                logger.warning("WeatherAPI.com 429 for (%s,%s)", lat, lon)
-            else:
-                logger.warning("WeatherAPI.com HTTP %s", res.status_code)
-        return None
+        t0 = time.monotonic()
+        try:
+            async with httpx.AsyncClient(timeout=_REQUEST_TIMEOUT) as client:
+                res = await client.get(url)
+                elapsed = time.monotonic() - t0
+                if res.status_code == 200:
+                    return self._format_weatherapi_response(res.json(), lat, lon, village, district, state)
 
-    async def _fetch_open_meteo(self, lat, lon, village, district, state):
+                category = "auth_error" if res.status_code in (401, 403) else ("rate_limit" if res.status_code == 429 else f"http_{res.status_code}")
+                logger.warning("WeatherAPI.com failed: status=%s category=%s elapsed=%.2fs", res.status_code, category, elapsed)
+                if res.status_code == 429:
+                    self._set_cooldown(self._cache_key(lat, lon), _COOLDOWN_TTL)
+                return None
+        except httpx.TimeoutException:
+            elapsed = time.monotonic() - t0
+            logger.warning("WeatherAPI.com failed: category=timeout elapsed=%.2fs", elapsed)
+            return None
+        except Exception as exc:
+            elapsed = time.monotonic() - t0
+            logger.warning("WeatherAPI.com failed: category=network_error error=%s elapsed=%.2fs", type(exc).__name__, elapsed)
+            return None
+
+    async def _fetch_open_meteo(self, lat: float, lon: float, village: str, district: str, state: str) -> Optional[Dict[str, Any]]:
         om_key = (getattr(settings, "OPEN_METEO_API_KEY", "") or "").strip()
-        if om_key:
-            base = "customer-api.open-meteo.com"
-            key_param = f"&apikey={om_key}"
-        else:
-            base = "api.open-meteo.com"
-            key_param = ""
+        base = "customer-api.open-meteo.com" if om_key else "api.open-meteo.com"
+        key_param = f"&apikey={om_key}" if om_key else ""
         url = (
             f"https://{base}/v1/forecast?latitude={lat}&longitude={lon}"
             f"&current=temperature_2m,relative_humidity_2m,apparent_temperature,"
@@ -168,18 +167,29 @@ class WeatherService:
             f"precipitation_probability_max,precipitation_sum,wind_speed_10m_max"
             f"&timezone=auto{key_param}"
         )
-        async with httpx.AsyncClient(timeout=_REQUEST_TIMEOUT) as client:
-            res = await client.get(url)
-            if res.status_code == 200:
-                return self._format_open_meteo_response(res.json(), lat, lon, village, district, state)
-            elif res.status_code == 429:
-                self._set_cooldown(self._cache_key(lat, lon), _COOLDOWN_TTL)
-                logger.warning("Open-Meteo 429 for (%s,%s)", lat, lon)
-            else:
-                logger.warning("Open-Meteo HTTP %s", res.status_code)
-        return None
+        t0 = time.monotonic()
+        try:
+            async with httpx.AsyncClient(timeout=_REQUEST_TIMEOUT) as client:
+                res = await client.get(url)
+                elapsed = time.monotonic() - t0
+                if res.status_code == 200:
+                    return self._format_open_meteo_response(res.json(), lat, lon, village, district, state)
 
-    def _format_weatherapi_response(self, data, lat, lon, village, district, state):
+                category = "rate_limit" if res.status_code == 429 else f"http_{res.status_code}"
+                logger.warning("Open-Meteo failed: status=%s category=%s elapsed=%.2fs", res.status_code, category, elapsed)
+                if res.status_code == 429:
+                    self._set_cooldown(self._cache_key(lat, lon), _COOLDOWN_TTL)
+                return None
+        except httpx.TimeoutException:
+            elapsed = time.monotonic() - t0
+            logger.warning("Open-Meteo failed: category=timeout elapsed=%.2fs", elapsed)
+            return None
+        except Exception as exc:
+            elapsed = time.monotonic() - t0
+            logger.warning("Open-Meteo failed: category=network_error error=%s elapsed=%.2fs", type(exc).__name__, elapsed)
+            return None
+
+    def _format_weatherapi_response(self, data: Dict[str, Any], lat: float, lon: float, village: str, district: str, state: str) -> Dict[str, Any]:
         sr = self._safe_round
         current = data.get("current", {})
         forecast_days = data.get("forecast", {}).get("forecastday", [])
@@ -220,7 +230,7 @@ class WeatherService:
             "audio_summary": f"WeatherAPI: {village} {district}. Temp {temp_curr}C, {condition_text}. Humidity {humidity}%.",
         }
 
-    def _format_open_meteo_response(self, data, lat, lon, village, district, state):
+    def _format_open_meteo_response(self, data: Dict[str, Any], lat: float, lon: float, village: str, district: str, state: str) -> Dict[str, Any]:
         sr = self._safe_round
         current = data.get("current", {})
         daily = data.get("daily", {})
@@ -275,10 +285,10 @@ class WeatherService:
             ),
         }
 
-    def _generate_insights(self, forecast, weather_available):
+    def _generate_insights(self, forecast: List[Dict[str, Any]], weather_available: bool) -> List[Dict[str, Any]]:
         if not forecast or not weather_available:
             return [{"title": "Weather forecast unavailable",
-                     "message": "No live forecast received. Try again later.",
+                     "message": "No live forecast received. Check your internet connection and try again.",
                      "type": "info", "icon": "rain"}]
         insights = []
         high_rain_day = next((f for f in forecast[:3] if (f.get("rain_chance") or 0) >= 40), None)
@@ -309,7 +319,7 @@ class WeatherService:
             })
         return insights
 
-    def _unavailable_response(self, lat, lon, village, district, state):
+    def _unavailable_response(self, lat: float, lon: float, village: str, district: str, state: str) -> Dict[str, Any]:
         return {
             "village": village, "district": district, "state": state,
             "lat": round(lat, 2), "lon": round(lon, 2),
@@ -326,3 +336,4 @@ class WeatherService:
 
 
 weather_service = WeatherService()
+
