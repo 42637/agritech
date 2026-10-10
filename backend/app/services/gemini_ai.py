@@ -28,7 +28,7 @@ class GeminiAIService:
         # API credentials are supplied only through the local environment.
         self.api_key = settings.GEMINI_API_KEY
         self.primary_model = "gemini-3.5-flash-lite"
-        self.fallback_model = "gemini-3.8-flash"
+        self.fallback_model = "gemini-3.6-flash"
 
     async def generate_irrigation_actions(
         self,
@@ -556,7 +556,8 @@ Write every JSON string value in {language_name}, using its native script. Keep 
         weather_source = weather_data.get("source", "unavailable")
         weather_live = weather_source in {"weatherapi", "open_meteo", "stale_forecast", "stale"}
 
-        candidate_models = list(dict.fromkeys([settings.GEMINI_MODEL, "gemini-3.5-flash-lite", "gemini-1.5-flash", "gemini-2.0-flash"]))
+        candidate_models = list(dict.fromkeys([settings.GEMINI_MODEL, self.primary_model, self.fallback_model, "gemini-3.5-flash-lite", "gemini-3.6-flash"]))
+        last_error_category = "not_attempted"
 
         logger.info(
             "generate_climate_risk_analysis: key_present=%s weather_source=%s period=%s models=%s",
@@ -684,11 +685,21 @@ Risk_type must be one of: temperature, rain, sun, wind, bug.
                             parsed["general_guidance"] = None
                             return parsed
                 except urllib.error.HTTPError as exc:
-                    category = "auth_error" if exc.code in {401, 403} else ("quota_exceeded" if exc.code == 429 else f"http_{exc.code}")
-                    logger.warning("Gemini climate risk HTTP %s category=%s model=%s", exc.code, category, model)
                     if exc.code in {401, 403}:
+                        last_error_category = "invalid_key"
+                        logger.warning("Gemini climate risk auth failure: status=%s category=invalid_key model=%s", exc.code, model)
                         break
+                    elif exc.code == 404:
+                        last_error_category = "unsupported_model"
+                        logger.warning("Gemini climate risk unsupported model: status=404 category=unsupported_model model=%s", model)
+                    elif exc.code == 429:
+                        last_error_category = "quota_exceeded"
+                        logger.warning("Gemini climate risk quota exceeded: status=429 category=rate_limit model=%s", model)
+                    else:
+                        last_error_category = f"http_{exc.code}"
+                        logger.warning("Gemini climate risk HTTP error: status=%s model=%s", exc.code, model)
                 except Exception as exc:
+                    last_error_category = "unexpected_error"
                     logger.warning("Gemini climate risk error model=%s: %s", model, type(exc).__name__)
 
         # --- Case B: Live weather unavailable -> Request general Paddy guidance from Gemini ---
@@ -768,7 +779,22 @@ Return STRICT JSON only:
                             "_gemini_status": "success_general_guidance",
                             "_weather_source": weather_source,
                         }
+                except urllib.error.HTTPError as exc:
+                    if exc.code in {401, 403}:
+                        last_error_category = "invalid_key"
+                        logger.warning("Gemini guidance auth failure: status=%s category=invalid_key model=%s", exc.code, model)
+                        break
+                    elif exc.code == 404:
+                        last_error_category = "unsupported_model"
+                        logger.warning("Gemini guidance unsupported model: status=404 category=unsupported_model model=%s", model)
+                    elif exc.code == 429:
+                        last_error_category = "quota_exceeded"
+                        logger.warning("Gemini guidance quota exceeded: status=429 category=rate_limit model=%s", model)
+                    else:
+                        last_error_category = f"http_{exc.code}"
+                        logger.warning("Gemini guidance HTTP error: status=%s model=%s", exc.code, model)
                 except Exception as exc:
+                    last_error_category = "unexpected_error"
                     logger.warning("Gemini general guidance error model=%s: %s", model, type(exc).__name__)
 
         # --- Fallback: Weather unavailable AND Gemini failed / not configured ---
