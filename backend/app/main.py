@@ -20,6 +20,7 @@ origins = [
     "http://localhost:3000",
     "https://localhost",
     "capacitor://localhost",
+    "https://agrismart-3xj8.onrender.com",
 ]
 if settings.FRONTEND_ORIGIN and settings.FRONTEND_ORIGIN != "*":
     origins.append(settings.FRONTEND_ORIGIN)

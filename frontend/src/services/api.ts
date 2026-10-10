@@ -5,7 +5,7 @@ const getApiBase = (): string => {
     return cleanUrl.endsWith('/api') ? cleanUrl : `${cleanUrl}/api`;
   }
   if (typeof window !== 'undefined' && (window as any).Capacitor?.isNativePlatform?.()) {
-    const customUrl = (window as any).AGRISMART_API_URL || 'https://agrismart-backend.onrender.com';
+    const customUrl = (window as any).AGRISMART_API_URL || 'https://agrismart-3xj8.onrender.com';
     return `${customUrl.replace(/\/+$/, '')}/api`;
   }
   return '/api';
