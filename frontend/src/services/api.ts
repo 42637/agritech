@@ -1,12 +1,22 @@
+import { Capacitor } from '@capacitor/core';
+
 const getApiBase = (): string => {
   const envUrl = import.meta.env.VITE_API_URL || import.meta.env.VITE_API_BASE_URL;
   if (envUrl && envUrl.trim() !== '') {
     const cleanUrl = envUrl.trim().replace(/\/+$/, '');
     return cleanUrl.endsWith('/api') ? cleanUrl : `${cleanUrl}/api`;
   }
-  if (typeof window !== 'undefined' && (window as any).Capacitor?.isNativePlatform?.()) {
-    const customUrl = (window as any).AGRISMART_API_URL || 'https://agrismart-3xj8.onrender.com';
-    return `${customUrl.replace(/\/+$/, '')}/api`;
+  if (Capacitor.isNativePlatform()) {
+    return 'https://agrismart-3xj8.onrender.com/api';
+  }
+  if (typeof window !== 'undefined' && (
+    window.location.hostname === 'localhost' ||
+    window.location.hostname === '127.0.0.1' ||
+    window.location.protocol === 'capacitor:' ||
+    window.location.protocol === 'file:' ||
+    Boolean((window as any).Capacitor?.isNativePlatform?.())
+  )) {
+    return 'https://agrismart-3xj8.onrender.com/api';
   }
   return '/api';
 };
