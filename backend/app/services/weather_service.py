@@ -1,3 +1,4 @@
+import asyncio
 import httpx
 import logging
 import time
@@ -30,7 +31,8 @@ WMO_CODES = {
 class WeatherService:
     def __init__(self):
         self._cache: Dict[str, Dict[str, Any]] = {}
-        self._cache_ttl = 300  # 5 minutes cache TTL for super-fast response
+        self._cache_ttl = 900  # 15 minutes cache TTL for weather data
+        self._locks: Dict[str, asyncio.Lock] = {}
 
     async def get_farm_weather(
         self,
@@ -40,7 +42,7 @@ class WeatherService:
         district: str = "West Godavari",
         state: str = "Andhra Pradesh"
     ) -> Dict[str, Any]:
-        """Fetches live weather & 7-day forecast from Open-Meteo API with fast in-memory caching to eliminate UI lag."""
+        """Fetches live weather & 7-day forecast from Open-Meteo API with fast in-memory caching to eliminate UI lag & HTTP 429 rate limits."""
         # Handle string village passed as first parameter
         if isinstance(lat, str):
             village = lat
@@ -53,56 +55,75 @@ class WeatherService:
         lat_val = float(lat) if lat is not None else 16.5449
         lon_val = float(lon) if lon is not None else 81.5212
 
-        cache_key = f"{round(lat_val, 2)}_{round(lon_val, 2)}_{village}"
+        # Round to 2 decimal places (~1.1 km precision) to consolidate nearby requests
+        cache_key = f"{round(lat_val, 2)}_{round(lon_val, 2)}"
         now = time.time()
 
-
-        # Check if valid cache exists (< 5 minutes old)
+        # Check if valid cache exists (< 15 minutes old)
         entry = self._cache.get(cache_key)
-        stale_forecast = entry.get("data") if entry and entry.get("data", {}).get("source") == "forecast" else None
+        stale_forecast = entry.get("data") if entry and entry.get("data", {}).get("source") in {"forecast", "stale_forecast"} else None
         if entry:
             if now - entry["timestamp"] < self._cache_ttl:
                 return entry["data"]
 
-        base_domain = "customer-api.open-meteo.com" if settings.OPEN_METEO_API_KEY else "api.open-meteo.com"
-        api_key_param = f"&apikey={settings.OPEN_METEO_API_KEY}" if settings.OPEN_METEO_API_KEY else ""
+        # Deduplicate simultaneous concurrent requests for the same location
+        if cache_key not in self._locks:
+            self._locks[cache_key] = asyncio.Lock()
 
-        url = (
-            f"https://{base_domain}/v1/forecast?"
-            f"latitude={lat}&longitude={lon}&"
-            f"current=temperature_2m,relative_humidity_2m,apparent_temperature,precipitation,weather_code,wind_speed_10m&"
-            f"hourly=temperature_2m,precipitation_probability,weather_code&"
-            f"daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max,precipitation_sum,wind_speed_10m_max&"
-            f"timezone=auto{api_key_param}"
-        )
+        async with self._locks[cache_key]:
+            # Re-check cache after acquiring lock
+            entry = self._cache.get(cache_key)
+            if entry and now - entry["timestamp"] < self._cache_ttl:
+                return entry["data"]
 
-        try:
-            async with httpx.AsyncClient(timeout=10.0) as client:
-                res = await client.get(url)
-                if res.status_code == 200:
-                    data = res.json()
-                    formatted = self._format_weather_response(data, lat, lon, village, district, state)
-                    if formatted.get("source") != "forecast":
-                        raise ValueError("Open-Meteo returned an incomplete forecast")
-                    # Store in cache
-                    self._cache[cache_key] = {"timestamp": now, "data": formatted}
-                    return formatted
-                else:
-                    logger.warning(f"Open-Meteo API returned status {res.status_code}")
-        except Exception as e:
-            logger.error(f"Open-Meteo Weather API fetch error: {str(e)}")
+            base_domain = "customer-api.open-meteo.com" if settings.OPEN_METEO_API_KEY else "api.open-meteo.com"
+            api_key_param = f"&apikey={settings.OPEN_METEO_API_KEY}" if settings.OPEN_METEO_API_KEY else ""
 
-        # Preserve the last real forecast during a temporary outage; never replace
-        # it with guessed weather values or label stale data as live.
-        if stale_forecast:
-            stale_data = dict(stale_forecast)
-            stale_data["source"] = "stale_forecast"
-            stale_data["updated_at"] = f"Last live update: {stale_forecast.get('updated_at', 'unknown')}"
-            return stale_data
+            url = (
+                f"https://{base_domain}/v1/forecast?"
+                f"latitude={lat_val}&longitude={lon_val}&"
+                f"current=temperature_2m,relative_humidity_2m,apparent_temperature,precipitation,weather_code,wind_speed_10m&"
+                f"hourly=temperature_2m,precipitation_probability,weather_code&"
+                f"daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max,precipitation_sum,wind_speed_10m_max&"
+                f"timezone=auto{api_key_param}"
+            )
 
-        # No forecast has been cached yet. Return explicit missing values rather
-        # than presenting hard-coded sample conditions as current weather.
-        return self._fallback_weather(lat_val, lon_val, village, district, state)
+            try:
+                async with httpx.AsyncClient(timeout=10.0) as client:
+                    res = await client.get(url)
+                    if res.status_code == 200:
+                        data = res.json()
+                        formatted = self._format_weather_response(data, lat_val, lon_val, village, district, state)
+                        if formatted.get("source") != "forecast":
+                            raise ValueError("Open-Meteo returned an incomplete forecast")
+                        # Store in cache with 15-minute TTL
+                        self._cache[cache_key] = {"timestamp": now, "data": formatted}
+                        return formatted
+                    elif res.status_code == 429:
+                        logger.warning("Open-Meteo API returned status 429 (Rate Limited). Applying 60-second backoff cache.")
+                        # Cache a 60-second backoff entry to prevent hammering Open-Meteo
+                        if stale_forecast:
+                            stale_data = dict(stale_forecast)
+                            stale_data["source"] = "stale_forecast"
+                            stale_data["updated_at"] = f"Cached Forecast (Open-Meteo Rate Limited)"
+                            self._cache[cache_key] = {"timestamp": now, "data": stale_data}
+                            return stale_data
+                        else:
+                            fallback = self._fallback_weather(lat_val, lon_val, village, district, state)
+                            self._cache[cache_key] = {"timestamp": now - self._cache_ttl + 60, "data": fallback}
+                            return fallback
+                    else:
+                        logger.warning(f"Open-Meteo API returned status {res.status_code}")
+            except Exception as e:
+                logger.error(f"Open-Meteo Weather API fetch error: {str(e)}")
+
+            if stale_forecast:
+                stale_data = dict(stale_forecast)
+                stale_data["source"] = "stale_forecast"
+                stale_data["updated_at"] = f"Last live update: {stale_forecast.get('updated_at', 'unknown')}"
+                return stale_data
+
+            return self._fallback_weather(lat_val, lon_val, village, district, state)
 
     def _format_weather_response(self, data: Dict[str, Any], lat: float, lon: float, village: str, district: str, state: str) -> Dict[str, Any]:
         current = data.get("current", {})

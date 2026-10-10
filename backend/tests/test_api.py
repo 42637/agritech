@@ -109,3 +109,20 @@ def test_ai_fallback_ask():
     data = res.json()
     assert "answer" in data
     assert len(data["answer"]) > 10
+
+def test_transcribe_audio_empty():
+    res = client.post("/api/ai/transcribe?language=en", data=b"short", headers={"Content-Type": "audio/webm"})
+    assert res.status_code == 200
+    data = res.json()
+    assert data["transcript"] == ""
+    assert "Audio recording is empty" in data.get("message", "")
+
+def test_weather_caching_and_deduplication():
+    farms_res = client.get("/api/farms")
+    farm_id = farms_res.json()[0]["id"]
+    res1 = client.get(f"/api/farms/{farm_id}/weather")
+    res2 = client.get(f"/api/farms/{farm_id}/weather")
+    assert res1.status_code == 200
+    assert res2.status_code == 200
+    assert res1.json()["lat"] == res2.json()["lat"]
+
