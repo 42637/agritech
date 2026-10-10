@@ -82,62 +82,20 @@ export const AlertsScreen: React.FC<AlertsScreenProps> = ({
   }, [activeFarmId, period, i18n.resolvedLanguage, i18n.language]);
 
 
-  const featured = alertsData?.analysis?.featured_risk || {
-    severity: "high",
-    title: "High Temperature Expected",
-    timeframe: "Next 3 days",
-    expected_value: "38–40°C",
-    normal_value: "Normal: 32°C",
-    impact_summary: "High heat stress may affect crop growth.",
-    recommendation: "Irrigate early morning or evening to reduce heat stress.",
-    risk_type: "temperature"
-  };
-
-  const upcoming = alertsData?.analysis?.upcoming_risks || [
-    {
-      severity: "medium",
-      title: "Heavy Rainfall",
-      timeframe: "In 2 days",
-      detail: "50 – 70 mm",
-      description: "Higher chance of rainfall.",
-      risk_type: "rain"
-    },
-    {
-      severity: "medium",
-      title: "Dry Conditions",
-      timeframe: "Next 7 days",
-      detail: "Low Rainfall",
-      description: "Soil moisture is low. Plan irrigation accordingly.",
-      risk_type: "sun"
-    },
-    {
-      severity: "low",
-      title: "Strong Wind",
-      timeframe: "In 4 days",
-      detail: "30 – 40 km/h",
-      description: "Wind speed rising; support standing crops.",
-      risk_type: "wind"
-    },
-    {
-      severity: "low",
-      title: "Pest/Disease Risk",
-      timeframe: "Favorable conditions",
-      detail: "High Humidity",
-      description: "High humidity may increase pest activity.",
-      risk_type: "bug"
-    }
-  ];
+  const weatherSource = alertsData?.weather?.source;
+  const weatherUnavailable = alertsData && weatherSource === 'unavailable';
+  const featured = alertsData?.analysis?.featured_risk || null;
+  const upcoming: any[] = alertsData?.analysis?.upcoming_risks || [];
 
   const getSeverityBadge = (sev: string) => {
     switch ((sev || '').toLowerCase()) {
-      case 'high':
-        return 'bg-rose-500 text-white';
-      case 'medium':
-        return 'bg-amber-500 text-white';
-      default:
-        return 'bg-green-600 text-white';
+      case 'high': return 'bg-rose-500 text-white';
+      case 'medium': return 'bg-amber-500 text-white';
+      case 'low': return 'bg-green-600 text-white';
+      default: return 'bg-gray-400 text-white'; // unknown
     }
   };
+
 
   const getRiskIcon = (type: string) => {
     switch ((type || '').toLowerCase()) {
@@ -284,7 +242,21 @@ export const AlertsScreen: React.FC<AlertsScreenProps> = ({
         </div>
       ) : (
         <>
-          {/* Featured Climate Risk Card (Pale Pink Container matching exact image layout) */}
+          {/* Weather Unavailable Banner */}
+          {weatherUnavailable && (
+            <div className="bg-amber-50 border border-amber-200 rounded-2xl p-3.5 flex items-start gap-3">
+              <Sun className="w-5 h-5 text-amber-500 fill-amber-300 shrink-0 mt-0.5" />
+              <div>
+                <p className="text-xs font-bold text-amber-800">Live weather unavailable</p>
+                <p className="text-[11px] text-amber-700 mt-0.5">
+                  Open-Meteo could not be reached. Risk assessment will resume once weather data is available. Check your connection.
+                </p>
+              </div>
+            </div>
+          )}
+
+          {/* Featured Climate Risk Card */}
+          {featured && (
           <div className="bg-[#FFF0F0] border border-rose-200/90 rounded-3xl p-4 space-y-3 shadow-2xs relative overflow-hidden">
             <div className="flex items-start justify-between">
               <div className="flex items-start gap-3">
@@ -334,6 +306,7 @@ export const AlertsScreen: React.FC<AlertsScreenProps> = ({
               <ChevronRight className="w-4 h-4 text-gray-400 shrink-0" />
             </div>
           </div>
+          )}
 
           {/* Section Header */}
           <div className="flex items-center justify-between pt-1">

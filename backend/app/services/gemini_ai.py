@@ -540,10 +540,350 @@ Write every JSON string value in {language_name}, using its native script. Keep 
         period: str = "today",
         language: str = "en",
     ) -> Dict[str, Any]:
-        """Generates dynamic AI climate risk analysis using live Gemini API based on farm context and climate forecast."""
-        prompt = f"""
-You are AgriSmart AI climate risk analyzer. Analyze the farm location, crop, and current weather/forecast data to output dynamic climate risk assessment.
+        """
+        Generate dynamic AI climate risk analysis via Gemini.
 
+        When weather is unavailable the fallback avoids fabricating any measurements
+        and explicitly marks risk as unknown rather than 'low'.
+        """
+        api_key = (self.api_key or "").strip()
+        village = farm_context.get('village', 'Bhimavaram')
+        crop = farm_context.get('current_crops', 'Paddy')
+        language_name = {"en": "English", "hi": "Hindi", "te": "Telugu"}.get(language, "English")
+        weather_source = weather_data.get("source", "unavailable")
+        weather_live = weather_source in {"forecast", "stale_forecast"}
+
+        logger.info(
+            "generate_climate_risk_analysis: model=%s key_present=%s weather_source=%s period=%s",
+            settings.GEMINI_MODEL,
+            bool(api_key),
+            weather_source,
+            period,
+        )
+
+        # --- Safely extract weather values (may all be None when source=unavailable) ---
+        def _fmt(value, suffix="", fallback="not available"):
+            """Format a weather value for the prompt. Never embeds Python None."""
+            if value is None:
+                return fallback
+            return f"{value}{suffix}"
+
+        temp = weather_data.get('current_temp')
+        max_temp = weather_data.get('max_temp')
+        min_temp = weather_data.get('min_temp')
+        rain_probability = weather_data.get('rain_chance')
+        wind = weather_data.get('wind_speed')
+        humidity = weather_data.get('humidity')
+        forecast = weather_data.get("forecast") or []
+        forecast_window = forecast[:1] if period == "today" else forecast[:7]
+
+        forecast_summary = "; ".join(
+            f"{day.get('date', day.get('day', 'Forecast day'))}: "
+            f"high {_fmt(day.get('max_temp'), '°C')}, "
+            f"low {_fmt(day.get('min_temp'), '°C')}, "
+            f"rain chance {_fmt(day.get('rain_chance'), '%')}"
+            for day in forecast_window
+        ) or "No daily forecast details available"
+
+        forecast_highs = [
+            float(day["max_temp"]) for day in forecast_window
+            if day.get("max_temp") is not None
+        ]
+        forecast_high = max(forecast_highs, default=max_temp)
+
+        period_label = {
+            "en": {"today": "Today", "7days": "Next 7 days", "30days": "Next 7 days; 30-day forecast unavailable"},
+            "hi": {"today": "आज", "7days": "अगले 7 दिन", "30days": "अगले 7 दिन; 30 दिन का अनुमान उपलब्ध नहीं"},
+            "te": {"today": "ఈరోజు", "7days": "తదుపరి 7 రోజులు", "30days": "తదుపరి 7 రోజులు; 30 రోజుల అంచనా అందుబాటులో లేదు"},
+        }.get(language, {}).get(period, period)
+
+        # --- Only attempt Gemini when the API key is configured ---
+        if api_key and weather_live:
+            prompt = f"""
+You are AgriSmart AI climate risk analyzer. Analyze the following farm and weather data to generate a dynamic climate risk analysis tailored specifically to {crop} farming in {village}.
+
+FARM DETAILS:
+- Farm Name: {farm_context.get('farm_name', village + ' Farm')}
+- Village: {village}
+- District: {farm_context.get('district', 'West Godavari')}
+- State: {farm_context.get('state', 'Andhra Pradesh')}
+- Acreage: {farm_context.get('acreage', 2.5)} acres
+- Current Crop: {crop}
+
+LIVE CLIMATE DATA ({period.upper()} FOCUS):
+- Current temperature: {_fmt(temp, '°C')}
+- Today's forecast high/low: {_fmt(max_temp, '°C')} / {_fmt(min_temp, '°C')}
+- Humidity: {_fmt(humidity, '%')}
+- Chance of rain today: {_fmt(rain_probability, '%')} (probability only; no rainfall amount was supplied)
+- Wind Speed: {_fmt(wind, ' km/h')}
+- Condition: {weather_data.get('condition') or 'not available'}
+- Available daily forecast: {forecast_summary}
+- Data source: {weather_source}
+
+Analyze the climate risk specifically for {crop} in {village} for the timeframe '{period}'.
+Write all text values in {language_name}. Use short everyday sentences a farmer can understand.
+Give one clear, practical action based only on the provided weather data.
+Do not invent measurements, certainty, rainfall amounts, or actions unsupported by the data.
+Rain chance is not rainfall amount. Do not claim soil moisture or pest risk without supporting data.
+Keep severity and risk_type values in English exactly as required by the schema.
+
+Return STRICT JSON matching this schema (no markdown, no backticks):
+{{
+  "featured_risk": {{
+    "severity": "high",
+    "title": "High Temperature Warning for {crop} in {village}",
+    "timeframe": "{period_label}",
+    "expected_value": "Forecast high: {_fmt(forecast_high, '°C')}",
+    "normal_value": "",
+    "impact_summary": "Heat stress in {village} may impact {crop} growth.",
+    "recommendation": "Irrigate early morning or evening to reduce heat stress on {crop}.",
+    "risk_type": "temperature"
+  }},
+  "upcoming_risks": [
+    {{"severity": "medium", "title": "Precipitation Risk", "timeframe": "Today", "detail": "{_fmt(rain_probability, '% chance')}", "description": "Rain is possible. Check local conditions and field drainage.", "risk_type": "rain"}},
+    {{"severity": "low", "title": "Soil Evaporation", "timeframe": "Next 7 days", "detail": "Include only if forecast data supports it", "description": "Do not include if no supporting data.", "risk_type": "sun"}},
+    {{"severity": "low", "title": "Wind Activity", "timeframe": "Today", "detail": "{_fmt(wind, ' km/h')}", "description": "Check field conditions.", "risk_type": "wind"}},
+    {{"severity": "low", "title": "Pest & Fungal Risk", "timeframe": "Ongoing", "detail": "Include only if humidity data supports it", "description": "Do not claim pest risk from humidity alone.", "risk_type": "bug"}}
+  ]
+}}
+
+Severity must be one of: high, medium, low.
+Risk_type must be one of: temperature, rain, sun, wind, bug.
+"""
+
+            def _send_request(model: str):
+                url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+                payload = {"contents": [{"parts": [{"text": prompt}]}]}
+                req = urllib.request.Request(
+                    url,
+                    data=json.dumps(payload).encode('utf-8'),
+                    headers={'Content-Type': 'application/json', 'x-goog-api-key': api_key},
+                )
+                with urllib.request.urlopen(req, timeout=15) as res:
+                    return res.status, json.loads(res.read().decode('utf-8'))
+
+            for model in [settings.GEMINI_MODEL, self.primary_model, "gemini-3.5-flash-lite"]:
+                try:
+                    t0 = __import__('time').monotonic()
+                    status, data = await asyncio.to_thread(_send_request, model)
+                    elapsed = __import__('time').monotonic() - t0
+                    logger.info("Gemini climate risk: model=%s status=%s elapsed=%.2fs", model, status, elapsed)
+                    if status == 200:
+                        parts = data.get("candidates", [{}])[0].get("content", {}).get("parts", [])
+                        txt = next((p.get("text", "") for p in parts if p.get("text")), "").strip()
+                        # Strip markdown fences if present
+                        if txt.startswith("```"):
+                            txt = re.sub(r'^```[^\n]*\n?', '', txt).rstrip('`').strip()
+                        parsed = json.loads(txt)
+                        if "featured_risk" in parsed and "upcoming_risks" in parsed:
+                            logger.info("Gemini climate risk SUCCESS with model=%s", model)
+                            return parsed
+                        logger.warning("Gemini climate risk: response missing required keys (model=%s)", model)
+                except urllib.error.HTTPError as exc:
+                    try:
+                        err_body = json.loads(exc.read().decode())
+                    except Exception:
+                        err_body = {}
+                    logger.warning(
+                        "Gemini HTTP %s for model=%s: %s",
+                        exc.code, model,
+                        err_body.get("error", {}).get("message", ""),
+                    )
+                    if exc.code in {401, 403}:
+                        break  # Key invalid — don't retry other models
+                except Exception as exc:
+                    logger.warning("Gemini climate risk error with model=%s: %s", model, exc)
+
+        elif api_key and not weather_live:
+            logger.info(
+                "Skipping Gemini climate risk: weather source is '%s' — no live data to analyse",
+                weather_source,
+            )
+
+        elif not api_key:
+            logger.warning("Gemini climate risk: GEMINI_API_KEY is not configured")
+
+        # --- Fallback: generate structured response from actual weather values ---
+        # When weather is unavailable: return explicit unknown risk, not fabricated low-risk.
+        if not weather_live:
+            return {
+                "featured_risk": {
+                    "severity": "unknown",
+                    "title": f"Weather data unavailable for {crop} in {village}",
+                    "timeframe": period_label,
+                    "expected_value": "No live data",
+                    "normal_value": "",
+                    "impact_summary": (
+                        f"Live weather data could not be retrieved for {village}. "
+                        f"Risk assessment for {crop} cannot be completed without measurements."
+                    ),
+                    "recommendation": (
+                        "Check your internet connection and refresh the page. "
+                        "When weather data is available, a full risk assessment will be generated."
+                    ),
+                    "risk_type": "temperature",
+                },
+                "upcoming_risks": [
+                    {
+                        "severity": "unknown",
+                        "title": "Rainfall risk unknown",
+                        "timeframe": period_label,
+                        "detail": "No live data",
+                        "description": "Rain data is unavailable. Check conditions locally before field work.",
+                        "risk_type": "rain",
+                    },
+                    {
+                        "severity": "unknown",
+                        "title": "Temperature risk unknown",
+                        "timeframe": period_label,
+                        "detail": "No live data",
+                        "description": "Temperature data is unavailable. Monitor crop and soil conditions manually.",
+                        "risk_type": "sun",
+                    },
+                ],
+                "_weather_source": weather_source,
+                "_gemini_used": False,
+            }
+
+        # Weather IS available but Gemini failed — produce a safe rule-based summary
+        simple_fallback = {
+            "en": {
+                "heat_title": "Hot weather warning for {crop}",
+                "heat_impact": "Hot weather may dry the soil faster and stress the crop.",
+                "heat_action": "Check soil moisture. If dry, irrigate early morning or evening.",
+                "rain_title": "Rain forecast for {village}",
+                "rain_impact": "Rain chance today is {probability}%. If rain is likely, ensure field drains are clear.",
+                "dry_title": "Soil may dry faster",
+                "dry_impact": "Warm weather can dry topsoil. Check moisture before watering.",
+                "forecast_high": "Forecast high: {value}°C",
+                "dry_timeframe": "Next 7 days",
+                "moisture_unavailable": "Soil moisture reading unavailable",
+                "wind_title": "Seasonal wind activity",
+                "wind_timeframe": "Next 3 days",
+                "wind_detail": "Wind speed: {wind} km/h",
+                "wind_impact": "Moderate winds in {village}. Support standing crops where needed.",
+                "pest_title": "Crop inspection recommended",
+                "ongoing": "Ongoing",
+                "humidity_detail": "Humidity {humidity}%",
+                "pest_impact": "Check {crop} regularly for visible pest activity.",
+            },
+            "hi": {
+                "heat_title": "{crop} के लिए गर्मी की चेतावनी",
+                "heat_impact": "गर्मी से मिट्टी जल्दी सूख सकती है और फसल पर असर पड़ सकता है।",
+                "heat_action": "मिट्टी की नमी देखें। सूखी हो तो सुबह जल्दी या शाम को पानी दें।",
+                "rain_title": "{village} में बारिश का अनुमान",
+                "rain_impact": "आज बारिश की संभावना {probability}% है। बारिश होने पर खेत से पानी निकलने का रास्ता देखें।",
+                "dry_title": "मिट्टी जल्दी सूख सकती है",
+                "dry_impact": "धूप और गर्मी से ऊपर की मिट्टी सूख सकती है। पानी देने से पहले नमी देखें।",
+                "forecast_high": "अधिकतम तापमान: {value}°C",
+                "dry_timeframe": "अगले 7 दिन",
+                "moisture_unavailable": "मिट्टी की नमी का माप उपलब्ध नहीं है",
+                "wind_title": "मौसमी हवा की जानकारी",
+                "wind_timeframe": "अगले 3 दिन",
+                "wind_detail": "हवा की गति: {wind} किमी/घंटा",
+                "wind_impact": "{village} में मध्यम हवा। ज़रूरत पड़ने पर फसल को सहारा दें।",
+                "pest_title": "फसल की नियमित जाँच",
+                "ongoing": "जारी",
+                "humidity_detail": "नमी {humidity}%",
+                "pest_impact": "{crop} में कीटों के लिए नियमित जाँच करें।",
+            },
+            "te": {
+                "heat_title": "{crop} పంటకు వేడి హెచ్చరిక",
+                "heat_impact": "వేడి వల్ల నేల త్వరగా ఎండిపోవచ్చు; పంటపై ప్రభావం ఉండవచ్చు.",
+                "heat_action": "నేల తేమను చూడండి. ఎండిపోయి ఉంటే ఉదయం లేదా సాయంత్రం నీరు పెట్టండి.",
+                "rain_title": "{village}లో వర్ష సూచన",
+                "rain_impact": "ఈ రోజు వర్షం అవకాశం {probability}%. వస్తే పొలంలో నీరు బయటకు వెళ్లే మార్గాన్ని చూడండి.",
+                "dry_title": "నేల త్వరగా ఎండిపోవచ్చు",
+                "dry_impact": "ఎండ వల్ల పై మట్టి ఎండిపోవచ్చు. నీరు పెట్టే ముందు నేల తేమ చూడండి.",
+                "forecast_high": "గరిష్ఠ ఉష్ణోగ్రత: {value}°C",
+                "dry_timeframe": "తదుపరి 7 రోజులు",
+                "moisture_unavailable": "నేల తేమ కొలత అందుబాటులో లేదు",
+                "wind_title": "కాలానుగుణ గాలుల సమాచారం",
+                "wind_timeframe": "తదుపరి 3 రోజులు",
+                "wind_detail": "గాలి వేగం: {wind} కి.మీ/గం",
+                "wind_impact": "{village}లో మోస్తరు గాలులు. అవసరమైతే నిలువు పంటలకు ఆధారం ఇవ్వండి.",
+                "pest_title": "పంటను క్రమం తప్పకుండా పరిశీలించండి",
+                "ongoing": "కొనసాగుతోంది",
+                "humidity_detail": "గాలిలో తేమ {humidity}%",
+                "pest_impact": "{crop} పంటలో చీడపీడల కోసం క్రమం తప్పకుండా పరిశీలించండి.",
+            },
+        }.get(language) or {
+            "heat_title": "Hot weather warning for {crop}",
+            "heat_impact": "Hot weather may dry the soil faster and stress the crop.",
+            "heat_action": "Check soil moisture. If dry, irrigate early morning or evening.",
+            "rain_title": "Rain forecast for {village}",
+            "rain_impact": "Rain chance today is {probability}%. Ensure field drains are clear.",
+            "dry_title": "Soil may dry faster",
+            "dry_impact": "Check soil moisture before watering.",
+            "forecast_high": "Forecast high: {value}°C",
+            "dry_timeframe": "Next 7 days",
+            "moisture_unavailable": "Soil moisture unavailable",
+            "wind_title": "Seasonal wind activity",
+            "wind_timeframe": "Next 3 days",
+            "wind_detail": "Wind: {wind} km/h",
+            "wind_impact": "Moderate winds. Support standing crops where needed.",
+            "pest_title": "Crop inspection recommended",
+            "ongoing": "Ongoing",
+            "humidity_detail": "Humidity {humidity}%",
+            "pest_impact": "Check {crop} regularly.",
+        }
+
+        fh_label = _fmt(forecast_high, '°C')
+        is_high_temp = forecast_high is not None and float(forecast_high) >= 33
+        rain_prob_int = int(rain_probability) if rain_probability is not None else 0
+        wind_val = _fmt(wind)
+        humidity_val = _fmt(humidity)
+
+        return {
+            "featured_risk": {
+                "severity": "high" if is_high_temp else "medium",
+                "title": simple_fallback["heat_title"].format(crop=crop, village=village),
+                "timeframe": period_label,
+                "expected_value": simple_fallback["forecast_high"].format(value=fh_label),
+                "normal_value": "",
+                "impact_summary": simple_fallback["heat_impact"],
+                "recommendation": simple_fallback["heat_action"],
+                "risk_type": "temperature",
+            },
+            "upcoming_risks": [
+                {
+                    "severity": "medium" if rain_prob_int >= 40 else "low",
+                    "title": simple_fallback["rain_title"].format(crop=crop, village=village),
+                    "timeframe": period_label,
+                    "detail": f"{rain_prob_int}%",
+                    "description": simple_fallback["rain_impact"].format(probability=rain_prob_int),
+                    "risk_type": "rain",
+                },
+                {
+                    "severity": "low",
+                    "title": simple_fallback["dry_title"],
+                    "timeframe": simple_fallback["dry_timeframe"],
+                    "detail": simple_fallback["moisture_unavailable"],
+                    "description": simple_fallback["dry_impact"],
+                    "risk_type": "sun",
+                },
+                {
+                    "severity": "low",
+                    "title": simple_fallback["wind_title"],
+                    "timeframe": simple_fallback["wind_timeframe"],
+                    "detail": simple_fallback["wind_detail"].format(wind=wind_val),
+                    "description": simple_fallback["wind_impact"].format(village=village),
+                    "risk_type": "wind",
+                },
+                {
+                    "severity": "low",
+                    "title": simple_fallback["pest_title"],
+                    "timeframe": simple_fallback["ongoing"],
+                    "detail": simple_fallback["humidity_detail"].format(humidity=humidity_val),
+                    "description": simple_fallback["pest_impact"].format(crop=crop),
+                    "risk_type": "bug",
+                },
+            ],
+            "_weather_source": weather_source,
+            "_gemini_used": False,
+        }
+
+        prompt = f"""
 FARM DETAILS:
 - Farm Name: {farm_context.get('farm_name', 'My Farm')}
 - Location: {farm_context.get('village', 'Bhimavaram')}, {farm_context.get('district', 'West Godavari')}, {farm_context.get('state', 'Andhra Pradesh')}
@@ -551,7 +891,7 @@ FARM DETAILS:
 - Current Crop: {farm_context.get('current_crops', 'Paddy')}
 
 LIVE WEATHER & CLIMATE DATA ({period.upper()} PERIOD):
-- Temperature: {weather_data.get('current_temp', 34)}°C (High: {weather_data.get('temp_high', 38)}°C, Low: {weather_data.get('temp_low', 26)}°C)
+- Temperature: {weather_data.get('current_temp', 34)}C (High: {weather_data.get('temp_high', 38)}C, Low: {weather_data.get('temp_low', 26)}C)
 - Humidity: {weather_data.get('humidity', 75)}%
 - Rainfall Prediction: {weather_data.get('rainfall', '0.0')} mm ({weather_data.get('rain_probability', 20)}% probability)
 - Wind Speed: {weather_data.get('wind_speed', 12)} km/h
