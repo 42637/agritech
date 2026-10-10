@@ -1,6 +1,6 @@
 import React from 'react';
 import { useTranslation } from 'react-i18next';
-import { Mic, MapPin, Map, Sprout, ChevronRight } from 'lucide-react';
+import { Mic, MapPin, Map, Sprout, ChevronRight, Leaf, ShoppingBasket } from 'lucide-react';
 import type { Farm } from '../services/api';
 import {
   RefWeatherIcon,
@@ -184,6 +184,36 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ onNavigate, selectedFarm
             <p className="text-[11px] font-medium text-gray-500 mt-0.5">
               {t('insightsSub', 'Grow smarter with data')}
             </p>
+          </div>
+        </button>
+
+        {/* Crop disease photo assessment */}
+        <button
+          onClick={() => onNavigate('crop-health')}
+          className="bg-white hover:border-emerald-300 border border-gray-100 rounded-3xl p-4 shadow-xs transition-all text-left flex flex-col justify-between h-40 group"
+        >
+          <div className="flex items-start justify-between">
+            <div className="w-13 h-13 rounded-2xl bg-[#E8F7EC] flex items-center justify-center p-2 shadow-xs text-[#087A3D]"><Leaf className="w-8 h-8" /></div>
+            <RefArrowBtn colorBg="bg-emerald-100" colorIcon="text-emerald-700" />
+          </div>
+          <div>
+            <h4 className="font-extrabold text-sm text-[#102D20] leading-tight">{t('cropHealth', 'Crop Disease Check')}</h4>
+            <p className="text-[11px] font-medium text-gray-600 mt-0.5">{t('cropHealthSub', 'Photo-based crop guidance')}</p>
+          </div>
+        </button>
+
+        {/* Direct farmer to buyer market */}
+        <button
+          onClick={() => onNavigate('farmers-market')}
+          className="bg-white hover:border-amber-300 border border-gray-100 rounded-3xl p-4 shadow-xs transition-all text-left flex flex-col justify-between h-40 group"
+        >
+          <div className="flex items-start justify-between">
+            <div className="w-13 h-13 rounded-2xl bg-[#FFF5D8] flex items-center justify-center p-2 shadow-xs text-[#9A5B00]"><ShoppingBasket className="w-8 h-8" /></div>
+            <RefArrowBtn colorBg="bg-amber-100" colorIcon="text-amber-700" />
+          </div>
+          <div>
+            <h4 className="font-extrabold text-sm text-[#102D20] leading-tight">{t('farmersMarket', 'Farmers’ Direct Market')}</h4>
+            <p className="text-[11px] font-medium text-gray-600 mt-0.5">{t('farmersMarketSub', 'Sell and buy without middlemen')}</p>
           </div>
         </button>
       </div>

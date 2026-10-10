@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 from typing import List
 import datetime
@@ -90,7 +90,8 @@ def delete_farm(farm_id: int, db: Session = Depends(get_db)):
     return {"message": "Farm parcel deleted successfully", "id": farm_id}
 
 @router.get("/{farm_id}/insights")
-async def get_farm_insights(farm_id: int, db: Session = Depends(get_db)):
+async def get_farm_insights(farm_id: int, language: str = Query("en"), db: Session = Depends(get_db)):
+    language = language.lower() if language.lower() in {"en", "te", "hi"} else "en"
     farm = db.query(Farm).filter(Farm.id == farm_id).first()
     if not farm:
         # Fallback parcel context if farm_id not found
@@ -115,7 +116,7 @@ async def get_farm_insights(farm_id: int, db: Session = Depends(get_db)):
         }
 
     from ..services.gemini_ai import gemini_ai_service
-    ai_insights = await gemini_ai_service.generate_farm_insights(farm_context)
+    ai_insights = await gemini_ai_service.generate_farm_insights(farm_context, language=language)
 
     return {
         "farm_id": farm_id,

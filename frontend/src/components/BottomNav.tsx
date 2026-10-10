@@ -14,8 +14,8 @@ export const BottomNav: React.FC<BottomNavProps> = ({ activeTab, onTabChange }) 
     { id: 'home', label: t('navHome', 'Home'), icon: Home },
     { id: 'my-farm', label: t('navMyFarm', 'My Farm'), icon: MapPin },
     { id: 'soil', label: t('navSoil', 'Soil'), icon: Sprout },
-    { id: 'climate-alerts', label: 'Climate', icon: CloudRain },
-    { id: 'irrigation', label: 'Irrigation', icon: Droplet },
+    { id: 'climate-alerts', label: t('navClimate', 'Climate'), icon: CloudRain },
+    { id: 'irrigation', label: t('navIrrigation', 'Irrigation'), icon: Droplet },
     { id: 'profile', label: t('navProfile', 'Profile'), icon: User },
   ];
 

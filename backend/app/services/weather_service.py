@@ -1,5 +1,6 @@
 import httpx
 import logging
+import time
 from typing import Dict, Any, List
 from datetime import datetime, timedelta
 from ..config import settings
@@ -27,9 +28,42 @@ WMO_CODES = {
 }
 
 class WeatherService:
-    async def get_farm_weather(self, lat: float, lon: float, village: str = "Bhimavaram", district: str = "West Godavari", state: str = "Andhra Pradesh") -> Dict[str, Any]:
-        """Fetches live weather & 7-day forecast from Open-Meteo API (with optional API key) and calculates metrics."""
-        
+    def __init__(self):
+        self._cache: Dict[str, Dict[str, Any]] = {}
+        self._cache_ttl = 300  # 5 minutes cache TTL for super-fast response
+
+    async def get_farm_weather(
+        self,
+        lat: Any = 16.5449,
+        lon: Any = 81.5212,
+        village: str = "Bhimavaram",
+        district: str = "West Godavari",
+        state: str = "Andhra Pradesh"
+    ) -> Dict[str, Any]:
+        """Fetches live weather & 7-day forecast from Open-Meteo API with fast in-memory caching to eliminate UI lag."""
+        # Handle string village passed as first parameter
+        if isinstance(lat, str):
+            village = lat
+            lat = 16.5449
+            lon = 81.5212
+        elif isinstance(lat, (int, float)) and isinstance(lon, str):
+            village = lon
+            lon = 81.5212
+
+        lat_val = float(lat) if lat is not None else 16.5449
+        lon_val = float(lon) if lon is not None else 81.5212
+
+        cache_key = f"{round(lat_val, 2)}_{round(lon_val, 2)}_{village}"
+        now = time.time()
+
+
+        # Check if valid cache exists (< 5 minutes old)
+        entry = self._cache.get(cache_key)
+        stale_forecast = entry.get("data") if entry and entry.get("data", {}).get("source") == "forecast" else None
+        if entry:
+            if now - entry["timestamp"] < self._cache_ttl:
+                return entry["data"]
+
         base_domain = "customer-api.open-meteo.com" if settings.OPEN_METEO_API_KEY else "api.open-meteo.com"
         api_key_param = f"&apikey={settings.OPEN_METEO_API_KEY}" if settings.OPEN_METEO_API_KEY else ""
 
@@ -43,35 +77,51 @@ class WeatherService:
         )
 
         try:
-            async with httpx.AsyncClient(timeout=8.0) as client:
+            async with httpx.AsyncClient(timeout=10.0) as client:
                 res = await client.get(url)
                 if res.status_code == 200:
                     data = res.json()
-                    return self._format_weather_response(data, lat, lon, village, district, state)
+                    formatted = self._format_weather_response(data, lat, lon, village, district, state)
+                    if formatted.get("source") != "forecast":
+                        raise ValueError("Open-Meteo returned an incomplete forecast")
+                    # Store in cache
+                    self._cache[cache_key] = {"timestamp": now, "data": formatted}
+                    return formatted
                 else:
                     logger.warning(f"Open-Meteo API returned status {res.status_code}")
         except Exception as e:
             logger.error(f"Open-Meteo Weather API fetch error: {str(e)}")
 
-        return self._fallback_weather(lat, lon, village, district, state)
+        # Preserve the last real forecast during a temporary outage; never replace
+        # it with guessed weather values or label stale data as live.
+        if stale_forecast:
+            stale_data = dict(stale_forecast)
+            stale_data["source"] = "stale_forecast"
+            stale_data["updated_at"] = f"Last live update: {stale_forecast.get('updated_at', 'unknown')}"
+            return stale_data
+
+        # No forecast has been cached yet. Return explicit missing values rather
+        # than presenting hard-coded sample conditions as current weather.
+        return self._fallback_weather(lat_val, lon_val, village, district, state)
 
     def _format_weather_response(self, data: Dict[str, Any], lat: float, lon: float, village: str, district: str, state: str) -> Dict[str, Any]:
         current = data.get("current", {})
         daily = data.get("daily", {})
 
-        wmo_code = current.get("weather_code", 0)
-        condition_text, icon_type = WMO_CODES.get(wmo_code, ("Partly Sunny", "Partly Sunny"))
+        wmo_code = current.get("weather_code")
+        condition_text, icon_type = WMO_CODES.get(wmo_code, ("Unavailable", "Unknown"))
 
-        temp_curr = round(current.get("temperature_2m", 32.0))
-        feels_like = round(current.get("apparent_temperature", 34.0))
-        humidity = round(current.get("relative_humidity_2m", 68))
-        wind_speed = round(current.get("wind_speed_10m", 12))
+        temp_curr = round(current["temperature_2m"]) if isinstance(current.get("temperature_2m"), (int, float)) else None
+        feels_like = round(current["apparent_temperature"]) if isinstance(current.get("apparent_temperature"), (int, float)) else None
+        humidity = round(current["relative_humidity_2m"]) if isinstance(current.get("relative_humidity_2m"), (int, float)) else None
+        wind_speed = round(current["wind_speed_10m"]) if isinstance(current.get("wind_speed_10m"), (int, float)) else None
 
         daily_time = daily.get("time", [])
-        max_temps = daily.get("temperature_2m_max", [32]*7)
-        min_temps = daily.get("temperature_2m_min", [24]*7)
-        rain_chances = daily.get("precipitation_probability_max", [10]*7)
-        daily_codes = daily.get("weather_code", [1]*7)
+        max_temps = daily.get("temperature_2m_max", [])
+        min_temps = daily.get("temperature_2m_min", [])
+        rain_chances = daily.get("precipitation_probability_max", [])
+        rainfall_amounts = daily.get("precipitation_sum", [])
+        daily_codes = daily.get("weather_code", [])
 
         forecast = []
         for i in range(min(7, len(daily_time))):
@@ -79,25 +129,37 @@ class WeatherService:
             dt = datetime.strptime(date_str, "%Y-%m-%d") if date_str else datetime.now() + timedelta(days=i)
             day_name = dt.strftime("%a")
             formatted_date = dt.strftime("%d %b")
-            d_code = daily_codes[i] if i < len(daily_codes) else 1
-            cond, _ = WMO_CODES.get(d_code, ("Partly Sunny", "Partly Sunny"))
+            d_code = daily_codes[i] if i < len(daily_codes) else None
+            cond, _ = WMO_CODES.get(d_code, ("Unavailable", "Unknown"))
 
             forecast.append({
                 "day": day_name,
                 "date": formatted_date,
-                "max_temp": round(max_temps[i]) if i < len(max_temps) else 32,
-                "min_temp": round(min_temps[i]) if i < len(min_temps) else 24,
-                "rain_chance": rain_chances[i] if (i < len(rain_chances) and rain_chances[i] is not None) else 10,
+                "max_temp": round(max_temps[i]) if i < len(max_temps) and isinstance(max_temps[i], (int, float)) else None,
+                "min_temp": round(min_temps[i]) if i < len(min_temps) and isinstance(min_temps[i], (int, float)) else None,
+                "rain_chance": rain_chances[i] if (i < len(rain_chances) and isinstance(rain_chances[i], (int, float))) else None,
+                "precipitation_mm": round(rainfall_amounts[i], 1) if i < len(rainfall_amounts) and rainfall_amounts[i] is not None else None,
                 "condition": cond,
                 "icon": "rain" if "Rain" in cond or "Shower" in cond or "Drizzle" in cond else ("cloud" if "Cloud" in cond or "Overcast" in cond or "Fog" in cond else "sun")
             })
 
-        rain_today = rain_chances[0] if (rain_chances and rain_chances[0] is not None) else 10
-        max_today = round(max_temps[0]) if max_temps else 32
-        min_today = round(min_temps[0]) if min_temps else 24
+        rain_today = rain_chances[0] if (rain_chances and isinstance(rain_chances[0], (int, float))) else None
+        max_today = round(max_temps[0]) if max_temps and isinstance(max_temps[0], (int, float)) else None
+        min_today = round(min_temps[0]) if min_temps and isinstance(min_temps[0], (int, float)) else None
 
         insights = self._generate_weather_insights(forecast)
         now_time = datetime.now().strftime("%I:%M %p")
+        forecast_has_values = any(
+            day.get(key) is not None
+            for day in forecast
+            for key in ("max_temp", "min_temp", "rain_chance", "precipitation_mm")
+        )
+        weather_available = any(value is not None for value in (temp_curr, humidity, wmo_code)) or forecast_has_values
+        audio_summary = (
+            f"Live Open-Meteo weather report for {village}, {district}. Current temperature is {temp_curr} degrees Celsius and {condition_text}. Humidity is {humidity} percent."
+            if weather_available and temp_curr is not None
+            else f"Live weather values are unavailable for {village}, {district}. Check the forecast again later."
+        )
 
         return {
             "village": village,
@@ -106,6 +168,8 @@ class WeatherService:
             "lat": round(lat, 2),
             "lon": round(lon, 2),
             "updated_at": f"Live Open-Meteo {now_time}",
+            "source": "forecast" if weather_available else "unavailable",
+            "rainfall_7d_mm": round(sum(value for value in rainfall_amounts[:7] if isinstance(value, (int, float))), 1) if rainfall_amounts else None,
             "current_temp": temp_curr,
             "feels_like": feels_like,
             "condition": condition_text,
@@ -116,10 +180,17 @@ class WeatherService:
             "humidity": humidity,
             "forecast": forecast,
             "insights": insights,
-            "audio_summary": f"Live Open-Meteo weather report for {village}, {district}. Current temperature is {temp_curr} degrees Celsius and {condition_text}. Humidity is {humidity} percent and wind speed is {wind_speed} kilometers per hour."
+            "audio_summary": audio_summary
         }
 
     def _generate_weather_insights(self, forecast: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        if not forecast:
+            return [{
+                "title": "Weather forecast unavailable",
+                "message": "No live forecast was received. Check again later before using weather to plan irrigation.",
+                "type": "info",
+                "icon": "rain",
+            }]
         insights = []
         high_rain_day = next((f for f in forecast[:3] if f.get("rain_chance", 0) >= 40), None)
         if high_rain_day:
@@ -132,7 +203,7 @@ class WeatherService:
         else:
             insights.append({
                 "title": "Clear Weather Window",
-                "message": "Favorable dry conditions expected across the next 3 days. Ideal for pesticide application and crop harvesting.",
+                "message": "No high-rain day appears in the short forecast. Check crop and field conditions before scheduling field work.",
                 "type": "info",
                 "icon": "rain"
             })
@@ -147,48 +218,34 @@ class WeatherService:
         return insights
 
     def _fallback_weather(self, lat: float, lon: float, village: str, district: str, state: str) -> Dict[str, Any]:
-        """Fallback forecast data structure."""
-        forecast = [
-            {"day": "Mon", "date": "12 Aug", "max_temp": 32, "min_temp": 24, "rain_chance": 10, "condition": "Sunny", "icon": "sun"},
-            {"day": "Tue", "date": "13 Aug", "max_temp": 30, "min_temp": 24, "rain_chance": 70, "condition": "Rainy", "icon": "rain"},
-            {"day": "Wed", "date": "14 Aug", "max_temp": 29, "min_temp": 23, "rain_chance": 60, "condition": "Moderate Rain", "icon": "rain"},
-            {"day": "Thu", "date": "15 Aug", "max_temp": 31, "min_temp": 24, "rain_chance": 20, "condition": "Partly Cloudy", "icon": "cloud-sun"},
-            {"day": "Fri", "date": "16 Aug", "max_temp": 33, "min_temp": 25, "rain_chance": 10, "condition": "Sunny", "icon": "sun"},
-            {"day": "Sat", "date": "17 Aug", "max_temp": 33, "min_temp": 25, "rain_chance": 10, "condition": "Sunny", "icon": "sun"},
-            {"day": "Sun", "date": "18 Aug", "max_temp": 32, "min_temp": 24, "rain_chance": 20, "condition": "Partly Cloudy", "icon": "cloud-sun"}
-        ]
-
+        """Return explicit missing data instead of inventing weather values."""
         return {
             "village": village,
             "district": district,
             "state": state,
             "lat": round(lat, 2) if lat else 16.54,
             "lon": round(lon, 2) if lon else 81.51,
-            "updated_at": "Today 9:00 AM",
-            "current_temp": 32,
-            "feels_like": 34,
-            "condition": "Partly Sunny",
-            "rain_chance": 10,
-            "max_temp": 32,
-            "min_temp": 24,
-            "wind_speed": 12,
-            "humidity": 65,
-            "forecast": forecast,
+            "updated_at": "Live forecast unavailable",
+            "source": "unavailable",
+            "rainfall_7d_mm": None,
+            "current_temp": None,
+            "feels_like": None,
+            "condition": None,
+            "rain_chance": None,
+            "max_temp": None,
+            "min_temp": None,
+            "wind_speed": None,
+            "humidity": None,
+            "forecast": [],
             "insights": [
                 {
-                    "title": "Rain possible tomorrow",
-                    "message": "There is a high chance of rain on Tuesday (13 Aug). Plan your farming activities.",
-                    "type": "warning",
-                    "icon": "rain"
-                },
-                {
-                    "title": "Good conditions for crop growth",
-                    "message": "Temperature and soil moisture conditions are favorable for most crops today.",
-                    "type": "success",
-                    "icon": "sprout"
+                    "title": "Weather forecast unavailable",
+                    "message": "No live forecast was received. Check again later before using weather to plan irrigation.",
+                    "type": "info",
+                    "icon": "rain",
                 }
             ],
-            "audio_summary": f"Live weather report for {village}, {district}. Current temperature is 32 degrees Celsius, feels like 34 degrees. Rain chance today is 10 percent with wind speed of 12 kilometers per hour."
+            "audio_summary": f"Live weather values are unavailable for {village}, {district}. Check again later."
         }
 
 weather_service = WeatherService()

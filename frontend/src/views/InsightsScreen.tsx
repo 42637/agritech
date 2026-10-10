@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { useTranslation } from 'react-i18next';
 import {
   ArrowLeft,
   Sprout,
@@ -30,6 +31,7 @@ export const InsightsScreen: React.FC<InsightsScreenProps> = ({
   selectedFarm,
   onBack
 }) => {
+  const { i18n } = useTranslation();
   const [activeTab, setActiveTab] = useState<'Overview' | 'Irrigation' | 'Growth' | 'History'>('Overview');
   const [aiInsights, setAiInsights] = useState<any>(null);
   const [loadingAi, setLoadingAi] = useState<boolean>(false);
@@ -46,8 +48,9 @@ export const InsightsScreen: React.FC<InsightsScreenProps> = ({
 
   const fetchDynamicInsights = async () => {
     setLoadingAi(true);
+    setAiInsights(null);
     try {
-      const res = await api.getFarmInsights(activeFarm.id || 1);
+      const res = await api.getFarmInsights(activeFarm.id || 1, i18n.resolvedLanguage || i18n.language || 'en');
       if (res && res.insights) {
         setAiInsights(res.insights);
       }
@@ -60,7 +63,7 @@ export const InsightsScreen: React.FC<InsightsScreenProps> = ({
 
   useEffect(() => {
     fetchDynamicInsights();
-  }, [activeFarm.id]);
+  }, [activeFarm.id, i18n.resolvedLanguage, i18n.language]);
 
   const previousYields = [
     { year: '2020', yield: 3.8, height: 'h-24' },

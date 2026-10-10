@@ -15,6 +15,8 @@ import { InsightsScreen } from './views/InsightsScreen';
 import { SavedScreen } from './views/SavedScreen';
 import { ProfileScreen } from './views/ProfileScreen';
 import { LoginScreen } from './views/LoginScreen';
+import { CropHealthScreen } from './views/CropHealthScreen';
+import { FarmersMarketScreen } from './views/FarmersMarketScreen';
 import { api } from './services/api';
 import type { Farm } from './services/api';
 
@@ -151,7 +153,13 @@ export function App() {
         )}
 
         {currentTab === 'crop-recommendations' && (
-          <CropRecommendationScreen selectedFarm={selectedFarm} onBack={() => setCurrentTab('home')} />
+          <CropRecommendationScreen
+            farms={farms}
+            selectedFarm={selectedFarm}
+            onSelectFarm={handleSelectFarm}
+            onAddFarm={() => setCurrentTab('my-farm')}
+            onBack={() => setCurrentTab('home')}
+          />
         )}
 
         {currentTab === 'farm-insights' && (
@@ -159,6 +167,14 @@ export function App() {
         )}
 
         {currentTab === 'saved' && <SavedScreen />}
+
+        {currentTab === 'crop-health' && (
+          <CropHealthScreen selectedFarm={selectedFarm} onBack={() => setCurrentTab('home')} />
+        )}
+
+        {currentTab === 'farmers-market' && (
+          <FarmersMarketScreen selectedFarm={selectedFarm} onBack={() => setCurrentTab('home')} />
+        )}
 
         {currentTab === 'profile' && (
           <ProfileScreen onLogout={() => setIsAuthenticated(false)} />

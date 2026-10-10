@@ -2,7 +2,8 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from .config import settings
 from .database import engine, Base
-from .routers import auth, farms, location, weather, soil, ai, alerts, saved, profile, irrigation, supabase_router
+from .routers import auth, farms, location, weather, soil, ai, alerts, saved, profile, irrigation, supabase_router, farmer_features
+from .services.supabase_service import supabase_service
 
 # Create database tables on startup
 Base.metadata.create_all(bind=engine)
@@ -32,6 +33,7 @@ app.include_router(saved.router)
 app.include_router(profile.router)
 app.include_router(irrigation.router)
 app.include_router(supabase_router.router)
+app.include_router(farmer_features.router)
 
 @app.get("/")
 def root():
@@ -39,17 +41,19 @@ def root():
         "status": "online",
         "app": "AgriSmart AI API Server",
         "version": "1.0.0",
-        "supabase": "connected",
+        "supabase_status_url": "/api/supabase/status",
         "weather_api": "Open-Meteo",
         "ai_engine": "Google Gemini 2.5 Flash AI",
         "docs_url": "/docs"
     }
 
 @app.get("/api/health")
-def health_check():
+async def health_check():
+    supabase_status = await supabase_service.get_status()
     return {
         "status": "healthy",
         "service": "agrismart-backend",
-        "supabase": "connected",
+        "supabase": supabase_status["status"],
+        "supabase_connected": supabase_status["connected"],
         "weather": "Open-Meteo API Active"
     }

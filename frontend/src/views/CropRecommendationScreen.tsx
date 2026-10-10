@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   ArrowLeft,
   ChevronRight,
@@ -23,6 +23,7 @@ interface CropRecommendationScreenProps {
   farms?: Farm[];
   selectedFarm?: Farm | null;
   onSelectFarm?: (farm: Farm) => void;
+  onAddFarm?: () => void;
   onBack: () => void;
   onNavigateToIrrigation?: (cropName: string) => void;
 }
@@ -46,6 +47,7 @@ export const CropRecommendationScreen: React.FC<CropRecommendationScreenProps> =
   farms = [],
   selectedFarm,
   onSelectFarm,
+  onAddFarm,
   onBack,
   onNavigateToIrrigation
 }) => {
@@ -57,16 +59,32 @@ export const CropRecommendationScreen: React.FC<CropRecommendationScreenProps> =
   const [selectedMultiCrops, setSelectedMultiCrops] = useState<string[]>(['Paddy', 'Maize', 'Groundnut']);
   const [waterSource, setWaterSource] = useState<string>('Canal');
   const [showSeasonDropdown, setShowSeasonDropdown] = useState<boolean>(false);
+  const activeLocationRef = useRef<HTMLButtonElement | null>(null);
 
-  const defaultFarms = [
-    { id: 1, village: 'Bhimavaram', acreage: 2.5, state: 'Andhra Pradesh' },
-    { id: 2, village: 'Tanuku', acreage: 1.8, state: 'Andhra Pradesh' },
-    { id: 3, village: 'Narsapuram', acreage: 3.2, state: 'Andhra Pradesh' },
-    { id: 4, village: 'Eluru', acreage: 1.0, state: 'Andhra Pradesh' }
-  ];
+  const displayFarms = farms;
+  const activeFarm = displayFarms.find((farm) => farm.id === selectedFarm?.id) || displayFarms[0];
 
-  const displayFarms = farms.length > 0 ? farms : defaultFarms;
-  const activeFarm = selectedFarm || displayFarms[0];
+  useEffect(() => {
+    activeLocationRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'nearest' });
+  }, [activeFarm?.id]);
+
+  if (!activeFarm) {
+    return (
+      <div className="mx-auto max-w-md space-y-4 px-4 pb-24 pt-3 font-sans">
+        <div className="flex items-center gap-3">
+          <button onClick={onBack} aria-label="Back" className="rounded-full p-2 hover:bg-gray-100"><ArrowLeft className="h-6 w-6 text-[#102D20]" /></button>
+          <div>
+            <h1 className="text-xl font-extrabold text-[#102D20]">Crop Recommendations</h1>
+            <p className="text-sm text-[#5A6E65]">Choose a saved farm location to see recommendations.</p>
+          </div>
+        </div>
+        <section className="space-y-3 rounded-2xl border border-amber-200 bg-amber-50 p-4">
+          <p className="font-semibold text-amber-950">No farm locations are saved yet. Add your farms to see recommendations for each location.</p>
+          {onAddFarm && <button onClick={onAddFarm} className="rounded-xl bg-emerald-800 px-4 py-2.5 font-bold text-white">Add a farm location</button>}
+        </section>
+      </div>
+    );
+  }
 
   const crops: CropItem[] = [
     {
@@ -270,26 +288,37 @@ export const CropRecommendationScreen: React.FC<CropRecommendationScreenProps> =
           </div>
         </div>
 
-        {/* Location Selector Pills */}
-        <div className="flex gap-2 overflow-x-auto no-scrollbar py-1">
+        {/* Locations come from the farmer's saved farm records. */}
+        <section aria-label="Saved farm locations" className="space-y-1.5">
+          <div className="flex items-center justify-between gap-2">
+            <p className="text-xs font-bold uppercase tracking-wide text-[#5A6E65]">Your farm locations ({displayFarms.length})</p>
+            {displayFarms.length > 1 && <span className="shrink-0 text-[11px] font-semibold text-slate-500">Swipe to see all →</span>}
+          </div>
+          <div className="farm-location-scroll flex snap-x snap-mandatory gap-2 overflow-x-auto overscroll-x-contain py-1 pb-2 touch-pan-x">
           {displayFarms.map((farm) => {
             const isSelected = activeFarm.id === farm.id;
             return (
               <button
                 key={farm.id}
-                onClick={() => onSelectFarm && onSelectFarm(farm as any)}
-                className={`flex-none px-3.5 py-2 rounded-2xl border transition-all flex items-center gap-1.5 text-xs font-extrabold ${
+                ref={isSelected ? activeLocationRef : undefined}
+                onClick={() => onSelectFarm?.(farm)}
+                aria-pressed={isSelected}
+                className={`w-56 max-w-[78vw] shrink-0 snap-start rounded-2xl border px-3 py-2.5 transition-all flex items-center gap-2 text-left ${
                   isSelected
                     ? 'bg-[#E7F7E4] border-[#087A3D] text-[#087A3D] ring-2 ring-[#087A3D]/20 shadow-2xs'
                     : 'bg-white border-gray-200 text-gray-700'
                 }`}
               >
-                <MapPin className="w-3.5 h-3.5 fill-current" />
-                <span>{farm.village}</span>
+                <MapPin className="h-4 w-4 shrink-0 fill-current" />
+                <span className="min-w-0">
+                  <span className="block truncate text-xs font-extrabold">{farm.village || farm.farm_name || 'Farm location'}</span>
+                  <span className="block truncate text-[11px] font-medium text-slate-600">{farm.district || farm.state}{farm.acreage ? ` · ${farm.acreage} acres` : ''}</span>
+                </span>
               </button>
             );
           })}
-        </div>
+          </div>
+        </section>
 
         {/* Interactive Season Selector Banner */}
         <div className="bg-[#FFFBEB] border border-amber-200/80 rounded-2xl p-3.5 shadow-2xs space-y-2 relative">

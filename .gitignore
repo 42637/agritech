@@ -9,6 +9,8 @@ ENV/
 dist/
 frontend/dist/
 build/
+tmp/
+*.log
 
 # Python cache & databases
 __pycache__/

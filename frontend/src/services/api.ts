@@ -1,5 +1,44 @@
 const API_BASE = '/api';
 
+export interface SupabaseStatus {
+  status: 'connected' | 'not_configured' | 'authentication_failed' | 'unreachable' | string;
+  connected: boolean;
+  provider?: string;
+  url?: string;
+  message?: string;
+}
+
+export interface CropDiseaseAssessment {
+  id?: number;
+  crop: string;
+  image_path: string | null;
+  saved?: boolean;
+  assessment: {
+    disease_present: boolean | null;
+    crop_match: boolean | null;
+    confidence: 'low' | 'medium' | 'high';
+    disease_name: string;
+    summary: string;
+    pesticide_recommendations: { active_ingredient: string; target: string; label_precaution: string }[];
+    safety_note: string;
+  };
+}
+
+export interface ProduceListing {
+  id: string;
+  seller_name: string;
+  seller_phone: string;
+  crop_name: string;
+  quantity_kg: number;
+  price_per_kg: number;
+  location: string;
+  harvest_date?: string | null;
+  quality_grade: string;
+  details: string;
+  status: string;
+  created_at: string;
+}
+
 export interface Farm {
   id: number;
   user_id: number;
@@ -148,6 +187,18 @@ export const api = {
     return res.json();
   },
 
+  async transcribeAudio(audio: Blob, language: string = 'en'): Promise<{ transcript: string }> {
+    const recordedMimeType = audio.type.split(';', 1)[0] || 'audio/webm';
+    const mimeType = recordedMimeType === 'audio/mp4' ? 'audio/m4a' : recordedMimeType;
+    const res = await fetch(`${API_BASE}/ai/transcribe?language=${encodeURIComponent(language)}`, {
+      method: 'POST',
+      headers: { 'Content-Type': mimeType },
+      body: audio,
+    });
+    if (!res.ok) throw new Error(`Voice transcription failed (${res.status})`);
+    return res.json();
+  },
+
   // Location
   async lookupPincode(pincode: string) {
     const res = await fetch(`${API_BASE}/location/pincode/${pincode}`);
@@ -164,6 +215,14 @@ export const api = {
   // Alerts & Saved
   async getAlerts() {
     const res = await fetch(`${API_BASE}/alerts`);
+    return res.json();
+  },
+
+  async getDynamicClimateAlerts(farmId?: number, period: string = 'today', language: string = 'en') {
+    const targetFarmId = farmId || 1;
+    const params = new URLSearchParams({ period, language });
+    const res = await fetch(`${API_BASE}/alerts/farm/${targetFarmId}?${params}`);
+    if (!res.ok) throw new Error("Failed to fetch climate risk alerts");
     return res.json();
   },
 
@@ -186,20 +245,97 @@ export const api = {
   },
 
   // Insights
-  async getFarmInsights(farmId: number) {
-    const res = await fetch(`${API_BASE}/farms/${farmId}/insights`);
+  async getFarmInsights(farmId: number, language: string = 'en') {
+    const res = await fetch(`${API_BASE}/farms/${farmId}/insights?language=${encodeURIComponent(language)}`);
     if (!res.ok) throw new Error("Failed to fetch dynamic farm insights");
     return res.json();
   },
 
   // Irrigation
-  async getIrrigationPlan(farmId: number, crop: string, waterSource: string, growthStage: string = "Vegetative Stage") {
+  async getIrrigationPlan(
+    farmId: number,
+    crop: string,
+    waterSource: string,
+    growthStage: string = "Vegetative Stage",
+    language: string = "en",
+    fieldUpdate?: {
+      soil_moisture: "dry" | "normal" | "wet" | "unknown";
+      pest_observed: boolean;
+      pest_description?: string;
+      pesticide_status: "not_used" | "used" | "not_sure";
+      pesticide_name?: string;
+      last_application_date?: string;
+      notes: string;
+    },
+    cropDurationDays?: number,
+  ) {
     const res = await fetch(`${API_BASE}/irrigation/plan`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ farm_id: farmId, crop, water_source: waterSource, growth_stage: growthStage })
+      body: JSON.stringify({
+        farm_id: farmId,
+        crop,
+        water_source: waterSource,
+        growth_stage: growthStage,
+        crop_duration_days: cropDurationDays,
+        language: ["en", "te", "hi"].includes(language) ? language : "en",
+        field_update: fieldUpdate,
+      })
     });
     if (!res.ok) throw new Error("Failed to fetch irrigation plan");
+    return res.json();
+  },
+
+  async getSupabaseStatus(): Promise<SupabaseStatus> {
+    const res = await fetch(`${API_BASE}/supabase/status`, { cache: 'no-store' });
+    if (!res.ok) throw new Error("Failed to fetch Supabase status");
+    return res.json();
+  },
+
+  async assessCropDisease(input: { image: File; crop: string; symptoms: string; language: string; farmId?: number }): Promise<CropDiseaseAssessment> {
+    const body = new FormData();
+    body.append('image', input.image);
+    body.append('crop', input.crop);
+    body.append('symptoms', input.symptoms);
+    body.append('language', ['en', 'te', 'hi'].includes(input.language) ? input.language : 'en');
+    if (input.farmId) body.append('farm_id', String(input.farmId));
+    const res = await fetch(`${API_BASE}/farmer-tools/disease-assessment`, { method: 'POST', body });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      throw new Error(data.detail || 'Could not assess the crop image. Please try again.');
+    }
+    return res.json();
+  },
+
+  async getProduceListings(crop?: string): Promise<ProduceListing[]> {
+    const query = crop?.trim() ? `?crop=${encodeURIComponent(crop.trim())}` : '';
+    const res = await fetch(`${API_BASE}/farmer-tools/marketplace/listings${query}`, { cache: 'no-store' });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      throw new Error(data.detail || 'Could not load produce listings.');
+    }
+    return res.json();
+  },
+
+  async createProduceListing(input: Omit<ProduceListing, 'id' | 'status' | 'created_at'> & { farm_id?: number }): Promise<ProduceListing> {
+    const res = await fetch(`${API_BASE}/farmer-tools/marketplace/listings`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input),
+    });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      throw new Error(data.detail || 'Could not publish your crop listing.');
+    }
+    return res.json();
+  },
+
+  async requestProducePurchase(listingId: string, buyer: { buyer_name: string; buyer_phone: string; quantity_kg: number }) {
+    const res = await fetch(`${API_BASE}/farmer-tools/marketplace/listings/${encodeURIComponent(listingId)}/purchase`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(buyer),
+    });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      throw new Error(data.detail || 'Could not submit your purchase request.');
+    }
     return res.json();
   }
 };

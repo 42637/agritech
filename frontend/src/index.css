@@ -37,6 +37,26 @@
   background: #94a3b8;
 }
 
+.farm-location-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: #94a3b8 #e8efeb;
+  -webkit-overflow-scrolling: touch;
+}
+
+.farm-location-scroll::-webkit-scrollbar {
+  height: 6px;
+}
+
+.farm-location-scroll::-webkit-scrollbar-track {
+  background: #e8efeb;
+  border-radius: 999px;
+}
+
+.farm-location-scroll::-webkit-scrollbar-thumb {
+  background: #94a3b8;
+  border-radius: 999px;
+}
+
 /* Animation utilities */
 @keyframes pulse-slow {
   0%, 100% { opacity: 1; transform: scale(1); }

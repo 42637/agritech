@@ -30,6 +30,8 @@ def update_profile(data: ProfileUpdate, db: Session = Depends(get_db)):
     if data.name:
         user.name = data.name
     if data.preferred_language:
+        if data.preferred_language not in {"en", "te", "hi"}:
+            raise HTTPException(status_code=422, detail="Unsupported language")
         user.preferred_language = data.preferred_language
     db.commit()
     db.refresh(user)

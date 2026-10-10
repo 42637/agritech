@@ -1,28 +1,29 @@
 import React from 'react';
 
-// Real Crop Image Mapping
+// Crop-specific illustrations; keeping each crop on its own asset prevents
+// unrelated images from silently standing in for crops that have no photo.
 export const CROP_IMAGES: Record<string, string> = {
-  Paddy: '/assets/crop_paddy.jpg',
-  Maize: '/assets/crop_maize.jpg',
-  Chilli: '/assets/crop_chilli.jpg',
-  Groundnut: '/assets/crop_groundnut.jpg',
-  Turmeric: '/assets/crop_turmeric.jpg',
-  Cotton: '/assets/crop_cotton.jpg',
-  'Green Gram': '/assets/crop_greengram.jpg',
-  Sesame: '/assets/crop_sesame.jpg',
-  Sugarcane: '/assets/crop_paddy.jpg',
-  Tomato: '/assets/crop_chilli.jpg',
-  Onion: '/assets/crop_turmeric.jpg',
-  'Red Gram': '/assets/crop_groundnut.jpg',
-  'Black Gram': '/assets/crop_greengram.jpg',
+  Paddy: '/assets/crops/crop_paddy.svg',
+  Maize: '/assets/crops/crop_maize.svg',
+  Chilli: '/assets/crops/crop_chilli.svg',
+  Groundnut: '/assets/crops/crop_groundnut.svg',
+  Turmeric: '/assets/crops/crop_turmeric.svg',
+  Cotton: '/assets/crops/crop_cotton.svg',
+  'Green Gram': '/assets/crops/crop_greengram.svg',
+  Sesame: '/assets/crops/crop_sesame.svg',
+  Sugarcane: '/assets/crops/crop_sugarcane.svg',
+  Tomato: '/assets/crops/crop_tomato.svg',
+  Onion: '/assets/crops/crop_onion.svg',
+  'Red Gram': '/assets/crops/crop_redgram.svg',
+  'Black Gram': '/assets/crops/crop_blackgram.svg',
 };
 
-// 1. Real Crop Image Component with styled container & fallback
+// Crop thumbnail with a neutral fallback for any crop that has no mapped art.
 export const CropImageThumb: React.FC<{ cropId: string; size?: 'sm' | 'md' | 'lg' }> = ({
   cropId,
   size = 'md'
 }) => {
-  const imgSrc = CROP_IMAGES[cropId] || '/assets/crop_paddy.jpg';
+  const imgSrc = CROP_IMAGES[cropId];
   
   const sizeClasses = {
     sm: 'w-10 h-10 rounded-xl',
@@ -32,11 +33,19 @@ export const CropImageThumb: React.FC<{ cropId: string; size?: 'sm' | 'md' | 'lg
 
   return (
     <div className={`${sizeClasses} overflow-hidden shadow-2xs border border-gray-200/80 bg-gray-50 shrink-0 relative`}>
-      <img
-        src={imgSrc}
-        alt={cropId}
-        className="w-full h-full object-cover object-center transition-transform hover:scale-105"
-      />
+      {imgSrc ? (
+        <img
+          src={imgSrc}
+          alt={`${cropId} illustration`}
+          loading="lazy"
+          decoding="async"
+          className="w-full h-full object-cover object-center transition-transform hover:scale-105"
+        />
+      ) : (
+        <span className="flex h-full w-full items-center justify-center text-xs font-semibold text-gray-600" aria-label={cropId}>
+          {cropId.slice(0, 2).toUpperCase()}
+        </span>
+      )}
     </div>
   );
 };

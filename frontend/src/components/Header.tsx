@@ -8,10 +8,17 @@ interface HeaderProps {
 }
 
 export const Header: React.FC<HeaderProps> = ({ onOpenNotifications, unreadAlertsCount = 1 }) => {
-  const { i18n } = useTranslation();
+  const { i18n, t } = useTranslation();
 
   const handleLanguageChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
-    i18n.changeLanguage(e.target.value);
+    const language = e.target.value;
+    i18n.changeLanguage(language);
+    try { localStorage.setItem('agrismart-language', language); } catch { /* storage may be unavailable */ }
+    void fetch('/api/profile', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ preferred_language: language })
+    }).catch(() => undefined);
   };
 
   return (
@@ -29,7 +36,7 @@ export const Header: React.FC<HeaderProps> = ({ onOpenNotifications, unreadAlert
               </h1>
             </div>
             <p className="text-[11px] text-[#5A6E65] font-medium leading-tight mt-0.5">
-              Smart Farming • Better Tomorrow
+              {t('appTagline')}
             </p>
           </div>
         </div>
@@ -39,7 +46,7 @@ export const Header: React.FC<HeaderProps> = ({ onOpenNotifications, unreadAlert
           <div className="relative flex items-center bg-gray-50 border border-gray-200 rounded-full px-2.5 py-1 text-xs text-[#102D20] font-medium shadow-xs">
             <span className="mr-1 text-sm">🌐</span>
             <select
-              value={i18n.language}
+              value={i18n.resolvedLanguage || i18n.language}
               onChange={handleLanguageChange}
               className="bg-transparent text-xs font-semibold focus:outline-hidden cursor-pointer pr-4 appearance-none"
             >

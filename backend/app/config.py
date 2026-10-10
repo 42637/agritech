@@ -15,4 +15,15 @@ class Settings:
     FRONTEND_ORIGIN: str = os.getenv("FRONTEND_ORIGIN", "http://localhost:5173")
     AUTH_PROVIDER: str = os.getenv("AUTH_PROVIDER", "dev_direct")
 
+    # Climate Risk Alert & Notification Configuration
+    ALERT_SYSTEM_ENABLED: bool = os.getenv("ALERT_SYSTEM_ENABLED", "true").lower() == "true"
+    SMS_ALERT_ENABLED: bool = os.getenv("SMS_ALERT_ENABLED", "true").lower() == "true"
+    ALERT_EMAIL: str = os.getenv("ALERT_EMAIL", "")
+    SMTP_HOST: str = os.getenv("SMTP_HOST", "smtp.gmail.com")
+    SMTP_PORT: int = int(os.getenv("SMTP_PORT", "587"))
+    SMTP_USER: str = os.getenv("SMTP_USER", "")
+    SMTP_PASSWORD: str = os.getenv("SMTP_PASSWORD") or os.getenv("SMTP_PASS", "")
+    SMTP_FROM: str = os.getenv("SMTP_FROM") or os.getenv("SMTP_USER", "")
+    SMS_PROVIDER_API_KEY: str = os.getenv("SMS_PROVIDER_API_KEY", "")
+
 settings = Settings()
